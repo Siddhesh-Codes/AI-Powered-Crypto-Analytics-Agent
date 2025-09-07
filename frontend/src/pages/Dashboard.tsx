@@ -311,17 +311,6 @@ const Dashboard: React.FC = () => {
         <div className="card">
           <h2 className="text-xl font-semibold mb-4">AI Tools & Features</h2>
           <div className="space-y-3">
-            <Link 
-              to="/predictions"
-              className="flex items-center space-x-3 p-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-lg transition-all transform hover:scale-[1.02]"
-            >
-              <Brain className="w-5 h-5" />
-              <div>
-                <div className="font-medium">AI Predictions</div>
-                <div className="text-xs opacity-80">LSTM, ARIMA, Transformer</div>
-              </div>
-            </Link>
-            
             <button 
               className="flex items-center space-x-3 p-3 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 rounded-lg transition-all transform hover:scale-[1.02] w-full"
               onClick={() => window.location.href = '/alerts'}

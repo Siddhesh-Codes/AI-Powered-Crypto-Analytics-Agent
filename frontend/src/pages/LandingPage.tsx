@@ -7,8 +7,6 @@ import {
   Zap, 
   BarChart3, 
   MessageCircle,
-  Users,
-  Award,
   ArrowRight,
   CheckCircle
 } from 'lucide-react';

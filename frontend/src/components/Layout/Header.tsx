@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Search, Bell, User, LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { useMarketStore } from '../../store/marketStore';
+import toast from 'react-hot-toast';
 
 /**
  * Header Component
@@ -11,6 +13,8 @@ const Header: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
   const [notifications, setNotifications] = useState([
     { id: 1, title: 'Bitcoin Alert', message: 'BTC reached your target price of $45,000', time: '2 minutes ago', unread: true },
     { id: 2, title: 'Portfolio Update', message: 'Your portfolio is up 5.2% today', time: '1 hour ago', unread: true },
@@ -18,8 +22,10 @@ const Header: React.FC = () => {
   ]);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
   
   const { user, logout } = useAuthStore();
+  const { topCryptos, searchCryptos } = useMarketStore();
   const navigate = useNavigate();
 
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -33,6 +39,9 @@ const Header: React.FC = () => {
       if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
         setShowNotifications(false);
       }
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSearchResults(false);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -41,13 +50,64 @@ const Header: React.FC = () => {
     };
   }, []);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      // Implement search functionality
-      console.log('Searching for:', searchQuery);
-      // You can navigate to search results or filter current data
+      try {
+        // Search in existing topCryptos first for instant results
+        const localResults = topCryptos.filter(crypto => 
+          crypto.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          crypto.name.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        
+        if (localResults.length > 0) {
+          setSearchResults(localResults);
+          setShowSearchResults(true);
+        } else {
+          // If no local results, search using API
+          const apiResults = await searchCryptos(searchQuery);
+          setSearchResults(apiResults);
+          setShowSearchResults(true);
+          
+          if (apiResults.length === 0) {
+            toast.error(`No cryptocurrencies found for "${searchQuery}"`);
+          } else {
+            toast.success(`Found ${apiResults.length} result(s) for "${searchQuery}"`);
+          }
+        }
+      } catch (error) {
+        console.error('Search error:', error);
+        toast.error('Search failed. Please try again.');
+      }
     }
+  };
+
+  // Handle search input change for real-time search
+  const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+    
+    if (value.trim()) {
+      // Real-time search in local data
+      const localResults = topCryptos.filter(crypto => 
+        crypto.symbol.toLowerCase().includes(value.toLowerCase()) ||
+        crypto.name.toLowerCase().includes(value.toLowerCase())
+      ).slice(0, 5); // Limit to 5 results for dropdown
+      
+      setSearchResults(localResults);
+      setShowSearchResults(true);
+    } else {
+      setShowSearchResults(false);
+    }
+  };
+
+  // Handle clicking on a search result
+  const handleSearchResultClick = (crypto: any) => {
+    setSearchQuery('');
+    setShowSearchResults(false);
+    // Navigate to crypto analysis page or dashboard with selected crypto
+    navigate(`/analytics?symbol=${crypto.symbol}`);
+    toast.success(`Viewing ${crypto.name} (${crypto.symbol})`);
   };
 
   const handleLogout = () => {
@@ -76,16 +136,45 @@ const Header: React.FC = () => {
     <header className="bg-slate-800 border-b border-slate-700 px-6 py-4">
       <div className="flex justify-between items-center">
         {/* Search Bar */}
-        <div className="flex-1 max-w-md">
+        <div className="flex-1 max-w-md" ref={searchRef}>
           <form onSubmit={handleSearch} className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input
               type="text"
               placeholder="Search cryptocurrencies..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={handleSearchInput}
               className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
+            
+            {/* Search Results Dropdown */}
+            {showSearchResults && searchResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-slate-700 border border-slate-600 rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
+                {searchResults.map((crypto, index) => (
+                  <div
+                    key={crypto.symbol || index}
+                    onClick={() => handleSearchResultClick(crypto)}
+                    className="flex items-center justify-between p-3 hover:bg-slate-600 cursor-pointer border-b border-slate-600 last:border-b-0"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-xs">
+                        {crypto.symbol.substring(0, 2)}
+                      </div>
+                      <div>
+                        <div className="font-medium text-white">{crypto.name}</div>
+                        <div className="text-sm text-slate-400">{crypto.symbol}</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-bold text-white">${crypto.price?.toLocaleString()}</div>
+                      <div className={`text-sm ${crypto.priceChangePercent24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {crypto.priceChangePercent24h >= 0 ? '+' : ''}{crypto.priceChangePercent24h?.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </form>
         </div>
 

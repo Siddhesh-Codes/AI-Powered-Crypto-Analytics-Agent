@@ -100,15 +100,6 @@ const Auth: React.FC = () => {
         }
         console.log('Attempting registration...');
         await register(formData.name, formData.email, formData.password);
-        
-        // Check if OTP is required after registration
-        const { pendingOtpEmail } = useAuthStore.getState();
-        if (pendingOtpEmail) {
-          console.log('Registration requires OTP verification');
-          toast.success('Registration started! Please check your email for the verification code');
-          return; // Don't navigate to dashboard yet, wait for OTP
-        }
-        
         console.log('Registration completed, checking auth state...');
         toast.success('Account created successfully!');
       }
@@ -172,43 +163,22 @@ const Auth: React.FC = () => {
       toast.error('Enter your email first');
       return;
     }
-    
-    // For registration, require all fields
-    if (!isLogin) {
-      if (!formData.name) {
-        toast.error('Enter your name first');
-        return;
-      }
-      if (!formData.password || !formData.confirmPassword) {
-        toast.error('Enter and confirm your password first');
-        return;
-      }
-      if (formData.password !== formData.confirmPassword) {
-        toast.error('Passwords do not match');
-        return;
-      }
-      if (!isStrongPassword(formData.password)) {
-        toast.error('Password must be 8+ chars, include uppercase, lowercase, number, and special character');
-        return;
-      }
-    }
-    
     try {
       setSendingOtp(true);
-      
-      if (isLogin) {
-        // Login flow: try resend-otp first
-        const resp = await fetch('http://localhost:8000/api/auth/resend-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: formData.email }),
-        });
+      // Try preferred endpoint first: resend-otp
+      const resp = await fetch('http://localhost:8000/api/auth/resend-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email }),
+      });
 
-        if (resp.ok) {
-          useAuthStore.setState({ pendingOtpEmail: formData.email });
-          toast.success('Login verification code sent');
-        } else if (resp.status === 404) {
-          // Fallback: require password to trigger login which sends OTP
+      if (resp.ok) {
+        useAuthStore.setState({ pendingOtpEmail: formData.email });
+        toast.success('Verification code sent');
+      } else if (resp.status === 404) {
+        // Fallbacks for backends that don't expose /resend-otp
+        if (isLogin) {
+          // Require password to trigger login which sends OTP
           if (!formData.password) {
             throw new Error('Enter your password to request a login code');
           }
@@ -224,23 +194,27 @@ const Auth: React.FC = () => {
           useAuthStore.setState({ pendingOtpEmail: formData.email });
           toast.success('Login code sent');
         } else {
-          const data = await resp.json().catch(() => ({} as any));
-          throw new Error((data as any).detail || 'Failed to send login OTP');
+          // Sign up flow: call register/start to send OTP
+          if (!formData.password) {
+            throw new Error('Set a strong password to request a sign-up code');
+          }
+          const regResp = await fetch('http://localhost:8000/api/auth/register/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: formData.name || 'User', email: formData.email, password: formData.password })
+          });
+          if (!regResp.ok) {
+            const data = await regResp.json().catch(() => ({} as any));
+            throw new Error((data as any).detail || 'Failed to initiate sign-up OTP');
+          }
+          useAuthStore.setState({ pendingOtpEmail: formData.email });
+          toast.success('Sign-up code sent');
         }
       } else {
-        // Registration flow: use the store's register method
-        console.log('🔍 Starting registration with Send Code...');
-        try {
-          await register(formData.name, formData.email, formData.password);
-          console.log('🔍 Registration method completed');
-          toast.success('Account registration started! Check your email for the verification code');
-        } catch (error) {
-          console.error('🔍 Registration method failed:', error);
-          throw error;
-        }
+        const data = await resp.json().catch(() => ({} as any));
+        throw new Error((data as any).detail || 'Failed to send OTP');
       }
     } catch (err) {
-      console.error('🔍 Send code error:', err);
       const msg = err instanceof Error ? err.message : 'Failed to send code';
       toast.error(msg);
     } finally {
@@ -254,13 +228,10 @@ const Auth: React.FC = () => {
       return;
     }
     try {
-      console.log('🔍 handleInlineVerify called');
-      console.log('🔍 Current auth state:', useAuthStore.getState());
       await verifyOtp(formData.otp);
       toast.success('Verified! Redirecting...');
       setTimeout(() => navigate('/dashboard', { replace: true }), 100);
     } catch (err) {
-      console.error('🔍 handleInlineVerify error:', err);
       const msg = err instanceof Error ? err.message : 'Invalid code';
       toast.error(msg);
     }
@@ -422,7 +393,7 @@ const Auth: React.FC = () => {
                   disabled={sendingOtp || !formData.email}
                   className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm text-white disabled:opacity-50"
                 >
-                  {sendingOtp ? 'Sending…' : (isLogin ? 'Send Code' : 'Start Signup')}
+                  {sendingOtp ? 'Sending…' : 'Send Code'}
                 </button>
                 <button
                   type="button"

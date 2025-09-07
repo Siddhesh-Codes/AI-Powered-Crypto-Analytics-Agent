@@ -107,7 +107,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
     
     for (const port of ports) {
       try {
-        const response = await fetch(`http://localhost:${port}/api/v1/ai/chat/health`, {
+        const response = await fetch(`http://localhost:${port}/health`, {
           timeout: 3000
         } as any);
         if (response.ok) {
@@ -178,7 +178,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
         }
       };
 
-      const response = await fetch(`http://localhost:${port}/api/v1/ai/chat`, {
+      const response = await fetch(`http://localhost:${port}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

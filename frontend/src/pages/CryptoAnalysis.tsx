@@ -159,37 +159,6 @@ const CryptoAnalysis: React.FC = () => {
                 <div className="text-lg font-bold">#{crypto.rank || 'N/A'}</div>
               </div>
             </div>
-
-            {/* AI Predictions */}
-            <div className="card">
-              <h2 className="text-xl font-semibold mb-4 flex items-center">
-                <Brain className="w-5 h-5 mr-2 text-purple-400" />
-                AI Price Predictions
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-slate-700 p-4 rounded-lg">
-                  <div className="text-sm text-slate-400">24h Prediction</div>
-                  <div className="text-lg font-bold text-green-400">
-                    ${((crypto.price || 0) * 1.023).toLocaleString()} (+2.3%)
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">LSTM Model</div>
-                </div>
-                <div className="bg-slate-700 p-4 rounded-lg">
-                  <div className="text-sm text-slate-400">7d Prediction</div>
-                  <div className="text-lg font-bold text-blue-400">
-                    ${((crypto.price || 0) * 1.087).toLocaleString()} (+8.7%)
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">ARIMA Model</div>
-                </div>
-                <div className="bg-slate-700 p-4 rounded-lg">
-                  <div className="text-sm text-slate-400">30d Prediction</div>
-                  <div className="text-lg font-bold text-purple-400">
-                    ${((crypto.price || 0) * 1.156).toLocaleString()} (+15.6%)
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">Transformer</div>
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* AI Chat - Right Side */}

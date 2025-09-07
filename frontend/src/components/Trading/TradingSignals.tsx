@@ -26,7 +26,14 @@ const TradingSignals: React.FC = () => {
   const [activeTimeframe, setActiveTimeframe] = useState('1h');
   const [filterType, setFilterType] = useState<'ALL' | 'BUY' | 'SELL' | 'HOLD'>('ALL');
   
-  const { topCryptos } = useMarketStore();
+  const { topCryptos, isLoading, fetchTopCryptos } = useMarketStore();
+
+  // Fetch market data on component mount
+  useEffect(() => {
+    if (topCryptos.length === 0) {
+      fetchTopCryptos(20);
+    }
+  }, [topCryptos.length, fetchTopCryptos]);
 
   // Generate AI trading signals based on market data
   useEffect(() => {
@@ -35,7 +42,6 @@ const TradingSignals: React.FC = () => {
         // Simulate AI analysis
         const change24h = crypto.priceChangePercent24h;
         const volume = crypto.volume24h;
-        const marketCap = crypto.marketCap;
         
         // AI decision logic (simplified for demo)
         let type: TradingSignal['type'] = 'HOLD';
@@ -201,13 +207,25 @@ const TradingSignals: React.FC = () => {
 
       {/* Trading Signals List */}
       <div className="space-y-4">
-        {filteredSignals.map(signal => (
-          <div key={signal.id} className={`card border-l-4 ${getSignalColor(signal.type)}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className={`p-3 rounded-lg border-2 ${getSignalColor(signal.type)}`}>
-                  {getSignalIcon(signal.type)}
-                </div>
+        {isLoading ? (
+          <div className="card text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-slate-400">Loading trading signals...</p>
+          </div>
+        ) : filteredSignals.length === 0 ? (
+          <div className="card text-center py-8">
+            <Brain className="w-12 h-12 text-slate-500 mx-auto mb-4" />
+            <p className="text-slate-400 mb-2">No trading signals available</p>
+            <p className="text-sm text-slate-500">Signals will appear once market data is loaded</p>
+          </div>
+        ) : (
+          filteredSignals.map(signal => (
+            <div key={signal.id} className={`card border-l-4 ${getSignalColor(signal.type)}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className={`p-3 rounded-lg border-2 ${getSignalColor(signal.type)}`}>
+                    {getSignalIcon(signal.type)}
+                  </div>
                 
                 <div>
                   <div className="flex items-center space-x-2 mb-1">
@@ -274,7 +292,8 @@ const TradingSignals: React.FC = () => {
               </div>
             </div>
           </div>
-        ))}
+          ))
+        )}
       </div>
 
       {/* AI Disclaimer */}

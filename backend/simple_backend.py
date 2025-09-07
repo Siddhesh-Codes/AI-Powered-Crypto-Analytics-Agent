@@ -1,12 +1,19 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, validator
 from typing import List, Optional, Dict, Any
 import uvicorn
 import os
 import asyncio
 import random
-from datetime import datetime
+import smtplib
+import secrets
+import hashlib
+import jwt
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Load environment variables from .env file
 try:
@@ -33,6 +40,149 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Authentication and Email Configuration
+security = HTTPBearer()
+
+# Email Configuration
+SMTP_USERNAME = os.getenv("GMAIL_USER", "siddheshshinde358@gmail.com")
+SMTP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "ltwy nncf acwz pzpj")
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+OTP_EXPIRY_MINUTES = int(os.getenv("OTP_EXPIRY_MINUTES", "10"))
+
+# In-memory storage (replace with database in production)
+pending_registrations = {}
+verified_users = {
+    "admin@cryptoanalytics.com": {
+        "email": "admin@cryptoanalytics.com",
+        "password_hash": "pre_verified_admin",
+        "is_verified": True,
+        "created_at": datetime.now()
+    }
+}
+otp_storage = {}
+
+# Pydantic models for authentication
+class UserRegistration(BaseModel):
+    email: str
+    password: str
+    
+    @validator('password')
+    def validate_password(cls, v):
+        if len(v) < 6:
+            raise ValueError('Password must be at least 6 characters long')
+        return v
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class OTPVerification(BaseModel):
+    email: str
+    otp: str
+
+class AuthResponse(BaseModel):
+    message: str
+    success: bool
+    token: Optional[str] = None
+    user: Optional[Dict[str, Any]] = None
+
+def send_otp_email(email: str, otp: str) -> bool:
+    """Send OTP via Gmail SMTP"""
+    try:
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = SMTP_USERNAME
+        msg['To'] = email
+        msg['Subject'] = "🔐 Your CryptoAnalytics Login Code"
+        
+        # Create HTML email body
+        html_body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px; text-align: center;">
+                        <h1 style="color: white; margin: 0;">🚀 CryptoAnalytics</h1>
+                        <p style="color: #cbd5e1; margin: 10px 0 0 0;">AI-Powered Cryptocurrency Platform</p>
+                    </div>
+                    
+                    <div style="background: #f8fafc; padding: 30px; border-radius: 10px; margin-top: 20px; text-align: center;">
+                        <h2 style="color: #1e293b; margin-bottom: 20px;">🔐 Your Security Code</h2>
+                        <p style="color: #475569;">Your verification code for CryptoAnalytics is:</p>
+                        
+                        <div style="background: white; border: 2px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1e293b;">
+                            {otp}
+                        </div>
+                        
+                        <p style="color: #64748b; font-size: 14px; margin-top: 25px;">
+                            ⏰ This code expires in {OTP_EXPIRY_MINUTES} minutes<br>
+                            🔒 Never share this code with anyone
+                        </p>
+                        
+                        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
+                        
+                        <p style="color: #94a3b8; font-size: 12px; text-align: center;">
+                            CryptoAnalytics - AI-Powered Cryptocurrency Analytics Platform<br>
+                            If you didn't request this code, please ignore this email.
+                        </p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        
+        # Attach HTML part
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        # Send email
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(msg)
+        
+        print(f"✅ OTP email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send OTP email to {email}: {e}")
+        return False
+
+def generate_otp() -> str:
+    """Generate a 6-digit OTP"""
+    return f"{random.randint(100000, 999999):06d}"
+
+def hash_password(password: str) -> str:
+    """Hash password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_otp_code(email: str, provided_otp: str) -> bool:
+    """Verify OTP code for email"""
+    if email not in otp_storage:
+        print(f"❌ No OTP found for email: {email}")
+        return False
+    
+    stored_data = otp_storage[email]
+    stored_otp = stored_data["otp"]
+    expiry_time = stored_data["expiry"]
+    
+    print(f"🔍 Verifying OTP for {email}")
+    print(f"📝 Stored OTP: {stored_otp}, Provided: {provided_otp}")
+    print(f"⏰ Expiry: {expiry_time}, Current: {datetime.now()}")
+    
+    # Check if OTP has expired
+    if datetime.now() > expiry_time:
+        print(f"⏰ OTP expired for {email}")
+        del otp_storage[email]
+        return False
+    
+    # Check if OTP matches
+    if stored_otp != provided_otp:
+        print(f"❌ OTP mismatch for {email}")
+        return False
+    
+    print(f"✅ OTP verified for {email}")
+    return True
 
 # Pydantic models for request/response
 class ChatMessage(BaseModel):
@@ -89,7 +239,7 @@ async def get_real_ai_response(user_message: str, context: Dict[str, Any] = {}) 
         
         # Call Groq API
         completion = groq_client.chat.completions.create(
-            model="mixtral-8x7b-32768",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": full_prompt}
@@ -720,6 +870,192 @@ async def root():
         "docs": "/docs"
     }
 
+# Authentication Endpoints
+@app.post("/api/auth/register", response_model=AuthResponse)
+async def register_user_shortcut(user: UserRegistration):
+    """Shortcut registration endpoint that frontend calls"""
+    return await start_registration(user)
+
+@app.post("/api/auth/register/start", response_model=AuthResponse)
+async def start_registration(user: UserRegistration):
+    """Start user registration process by sending OTP"""
+    try:
+        email = user.email.lower().strip()
+        
+        # Check if user already exists
+        if email in verified_users:
+            return AuthResponse(
+                message="User already exists. Please login instead.",
+                success=False
+            )
+        
+        # Generate and store OTP
+        otp = generate_otp()
+        expiry_time = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        
+        otp_storage[email] = {
+            "otp": otp,
+            "expiry": expiry_time,
+            "type": "registration"
+        }
+        
+        # Store pending registration
+        pending_registrations[email] = {
+            "email": email,
+            "password_hash": hash_password(user.password),
+            "created_at": datetime.now()
+        }
+        
+        # Send OTP email
+        if send_otp_email(email, otp):
+            return AuthResponse(
+                message=f"Registration started! OTP sent to {email}. Please verify to complete registration.",
+                success=True
+            )
+        else:
+            # Clean up if email sending failed
+            if email in otp_storage:
+                del otp_storage[email]
+            if email in pending_registrations:
+                del pending_registrations[email]
+            
+            raise HTTPException(status_code=500, detail="Failed to send OTP email")
+            
+    except Exception as e:
+        print(f"❌ Registration start error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/register/verify", response_model=AuthResponse)
+async def register_verify(verification: OTPVerification):
+    """Complete registration by verifying OTP"""
+    try:
+        email = verification.email.lower().strip()
+        otp = verification.otp.strip()
+        
+        print(f"🔍 Registration verification for: {email}")
+        print(f"📧 Pending registrations: {list(pending_registrations.keys())}")
+        print(f"🔑 OTP storage: {list(otp_storage.keys())}")
+        
+        # Check if there's a pending registration
+        if email not in pending_registrations:
+            print(f"❌ No pending registration for {email}")
+            raise HTTPException(status_code=400, detail="No pending registration found for this email")
+        
+        # Verify OTP
+        if not verify_otp_code(email, otp):
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+        
+        # Move from pending to verified users
+        user_data = pending_registrations[email]
+        verified_users[email] = {
+            **user_data,
+            "is_verified": True
+        }
+        
+        # Clean up
+        del pending_registrations[email]
+        del otp_storage[email]
+        
+        print(f"✅ User {email} registration completed successfully!")
+        
+        # Generate JWT token
+        token_payload = {
+            "email": email,
+            "exp": datetime.now() + timedelta(days=7)
+        }
+        token = jwt.encode(token_payload, "your_secret_key", algorithm="HS256")
+        
+        return AuthResponse(
+            message="Registration completed successfully!",
+            success=True,
+            token=token,
+            user={"email": email, "is_verified": True}
+        )
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Registration verification error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def login_user(user: UserLogin):
+    """Login user by sending OTP"""
+    try:
+        email = user.email.lower().strip()
+        
+        # Check if user exists and password is correct
+        if email not in verified_users:
+            raise HTTPException(status_code=400, detail="User not found. Please register first.")
+        
+        stored_user = verified_users[email]
+        if stored_user["password_hash"] != hash_password(user.password):
+            raise HTTPException(status_code=400, detail="Invalid password")
+        
+        # Generate and send OTP for login
+        otp = generate_otp()
+        expiry_time = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        
+        otp_storage[email] = {
+            "otp": otp,
+            "expiry": expiry_time,
+            "type": "login"
+        }
+        
+        # Send OTP email
+        if send_otp_email(email, otp):
+            return AuthResponse(
+                message=f"Login OTP sent to {email}. Please verify to continue.",
+                success=True
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send OTP email")
+            
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/verify-otp", response_model=AuthResponse)
+async def verify_login_otp(verification: OTPVerification):
+    """Verify OTP for login"""
+    try:
+        email = verification.email.lower().strip()
+        otp = verification.otp.strip()
+        
+        # Check if user exists
+        if email not in verified_users:
+            raise HTTPException(status_code=400, detail="User not found")
+        
+        # Verify OTP
+        if not verify_otp_code(email, otp):
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+        
+        # Clean up OTP
+        if email in otp_storage:
+            del otp_storage[email]
+        
+        # Generate JWT token
+        token_payload = {
+            "email": email,
+            "exp": datetime.now() + timedelta(days=7)
+        }
+        token = jwt.encode(token_payload, "your_secret_key", algorithm="HS256")
+        
+        return AuthResponse(
+            message="Login successful!",
+            success=True,
+            token=token,
+            user={"email": email, "is_verified": True}
+        )
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ OTP verification error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/v1/ai/chat/health")
 async def ai_health_check():
     return {
@@ -762,6 +1098,11 @@ async def ai_chat(request: ChatMessage):
             source="error_fallback",
             suggestions=["Try again", "Check connection", "Restart service"]
         )
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_simplified(request: ChatMessage):
+    """Simplified chat endpoint for frontend compatibility"""
+    return await ai_chat(request)
 
 @app.get("/health")
 async def health_check():
@@ -837,6 +1178,102 @@ async def get_portfolio_summary():
             "worst_performer": None
         }
     }
+
+@app.get("/api/market/data")
+async def get_market_data():
+    """Get global market data in the format expected by frontend"""
+    return {
+        "status": "success",
+        "data": {
+            "active_cryptocurrencies": 9847,
+            "total_cryptocurrencies": 24123,
+            "active_market_pairs": 89756,
+            "active_exchanges": 756,
+            "total_exchanges": 1234,
+            "eth_dominance": 17.8,
+            "btc_dominance": 52.3,
+            "eth_dominance_yesterday": 17.6,
+            "btc_dominance_yesterday": 52.1,
+            "eth_dominance_24h_percentage_change": 1.14,
+            "btc_dominance_24h_percentage_change": 0.38,
+            "defi_volume_24h": 12500000000,
+            "defi_volume_24h_reported": 12600000000,
+            "defi_market_cap": 85000000000,
+            "defi_24h_percentage_change": 2.5,
+            "stablecoin_volume_24h": 45000000000,
+            "stablecoin_volume_24h_reported": 45200000000,
+            "stablecoin_market_cap": 125000000000,
+            "stablecoin_24h_percentage_change": 0.1,
+            "derivatives_volume_24h": 156000000000,
+            "derivatives_volume_24h_reported": 156500000000,
+            "derivatives_24h_percentage_change": 3.2,
+            "quote": {
+                "USD": {
+                    "total_market_cap": 2500000000000,
+                    "total_volume_24h": 85000000000,
+                    "total_volume_24h_reported": 85500000000,
+                    "altcoin_volume_24h": 45000000000,
+                    "altcoin_volume_24h_reported": 45200000000,
+                    "altcoin_market_cap": 1200000000000,
+                    "defi_volume_24h": 12500000000,
+                    "defi_volume_24h_reported": 12600000000,
+                    "defi_24h_percentage_change": 2.5,
+                    "defi_market_cap": 85000000000,
+                    "stablecoin_volume_24h": 45000000000,
+                    "stablecoin_volume_24h_reported": 45200000000,
+                    "stablecoin_24h_percentage_change": 0.1,
+                    "stablecoin_market_cap": 125000000000,
+                    "derivatives_volume_24h": 156000000000,
+                    "derivatives_volume_24h_reported": 156500000000,
+                    "derivatives_24h_percentage_change": 3.2,
+                    "total_market_cap_yesterday": 2450000000000,
+                    "total_volume_24h_yesterday": 83000000000,
+                    "total_market_cap_yesterday_percentage_change": 2.04,
+                    "total_volume_24h_yesterday_percentage_change": 2.41,
+                    "last_updated": "2024-12-28T10:30:00.000Z"
+                }
+            }
+        }
+    }
+
+@app.post("/api/auth/resend-otp", response_model=AuthResponse)
+async def resend_otp(user_info: Dict[str, Any]):
+    """Resend OTP for user"""
+    try:
+        email = user_info.get("email", "").lower().strip()
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        
+        # Check if user exists
+        if email not in verified_users and email not in pending_registrations:
+            raise HTTPException(status_code=400, detail="User not found")
+        
+        # Generate and store new OTP
+        otp = generate_otp()
+        expiry_time = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        
+        otp_type = "registration" if email in pending_registrations else "login"
+        otp_storage[email] = {
+            "otp": otp,
+            "expiry": expiry_time,
+            "type": otp_type
+        }
+        
+        # Send OTP email
+        if send_otp_email(email, otp):
+            return AuthResponse(
+                message=f"New OTP sent to {email}",
+                success=True
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send OTP email")
+            
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Resend OTP error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     print("🚀 Starting Crypto Analytics AI Backend...")

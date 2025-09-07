@@ -8,7 +8,8 @@ import {
   TechnicalIndicators, 
   MarketSentiment 
 } from '../services/cryptoAPI';
-import { enhancedCryptoAPI, EnhancedCryptoData } from '../services/enhancedCryptoAPI';
+import { enhancedCryptoAPI } from '../services/enhancedCryptoAPI';
+// import { EnhancedCryptoData } from '../services/enhancedCryptoAPI'; // Currently unused
 import toast from 'react-hot-toast';
 
 interface MarketState {

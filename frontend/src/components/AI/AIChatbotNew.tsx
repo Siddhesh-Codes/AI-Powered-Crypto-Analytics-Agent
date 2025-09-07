@@ -49,15 +49,14 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
     {
       id: '1',
       type: 'bot',
-      content: '🚀 **Welcome to Real AI Crypto Assistant!** 🤖\n\nI\'m powered by advanced AI models and provide intelligent, dynamic responses!\n\n✨ **What makes me different:**\n• 🧠 Real AI intelligence (not scripted)\n• 📊 Live market data integration\n• 💡 Personalized advice based on your portfolio\n• 🔮 Dynamic predictions and analysis\n\nAsk me anything about crypto - each response is unique!',
+      content: '🚀 **Welcome to REAL AI Crypto Assistant v2.0!** 🤖\n\n✨ **NO MORE PRE-DEFINED RESPONSES!**\n\n🧠 **Powered by Multiple AI Models:**\n• 🔥 OpenAI GPT-4 (Premium intelligence)\n• ⚡ Groq Mixtral-8x7B (Ultra-fast responses)\n• 🎯 Claude-3 (Advanced reasoning)\n\n💫 **What makes me special:**\n• 🤖 Real AI intelligence - each response is unique!\n• 📊 Live market data integration\n• 💡 Personalized analysis based on your portfolio\n• 🎭 Conversation awareness - I remember our chat!\n\n🎯 **Ask me ANYTHING about crypto!**\nTry: "Give me an overview of Bitcoin for the last 7 days" or "Analyze my portfolio performance"\n\n*Every response is generated fresh by real AI models!*',
       timestamp: new Date(),
       suggestions: [
-        '📊 Analyze Bitcoin',
-        '💰 Review my portfolio',
-        '🔮 Market predictions',
+        '📊 Bitcoin 7-day analysis',
+        '💰 Review my portfolio performance',
         '🧮 Profit calculator',
-        '📈 Best altcoins',
-        '⚡ Trading strategy'
+        '📈 Best altcoins now',
+        '⚡ Trading strategy advice'
       ],
     },
   ]);
@@ -67,7 +66,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
   const [isListening, setIsListening] = useState(false);
   const [chatTheme, setChatTheme] = useState<'dark' | 'light' | 'crypto'>('crypto');
   const [showTools, setShowTools] = useState(false);
-  const [aiStatus, setAiStatus] = useState<'online' | 'fallback' | 'offline'>('online');
+  const [aiStatus, setAiStatus] = useState<'online' | 'offline'>('online');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -89,49 +88,96 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
   // Check AI service health on mount
   useEffect(() => {
     checkAIHealth();
+    // Check AI health every 10 seconds
+    const interval = setInterval(checkAIHealth, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const checkAIHealth = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/v1/ai/chat/health');
+      console.log('🔍 Checking AI backend health...');
+      const response = await fetch('http://localhost:8000/health', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
       if (response.ok) {
+        const healthData = await response.json();
+        console.log('✅ Backend health check successful:', healthData);
         setAiStatus('online');
       } else {
-        setAiStatus('fallback');
+        console.warn('⚠️ Backend health check failed:', response.status);
+        setAiStatus('offline');
       }
     } catch (error) {
-      setAiStatus('fallback');
+      console.error('❌ Backend health check error:', error);
+      setAiStatus('offline');
     }
   };
 
   const generateRealAIResponse = async (userMessage: string): Promise<ChatMessage> => {
     try {
-      console.log('🤖 Calling Real AI Backend...');
+      console.log('🤖 Calling Real AI Backend for message:', userMessage);
+      
+      const requestBody = {
+        message: userMessage,
+        conversation_history: messages.slice(-5).map(msg => ({
+          role: msg.type === 'user' ? 'user' : 'assistant',
+          content: msg.content,
+          timestamp: msg.timestamp
+        })),
+        user_context: {
+          portfolio_value: totalValue,
+          portfolio_change: totalChangePercent24h,
+          assets_count: assets.length,
+          top_cryptos: topCryptos.slice(0, 5),
+          current_page: window.location.pathname,
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+      console.log('📤 Sending request to Real AI Backend...');
       
       const response = await fetch('http://localhost:8000/api/v1/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          message: userMessage,
-          conversation_history: messages.slice(-5).map(msg => ({
-            role: msg.type === 'user' ? 'user' : 'assistant',
-            content: msg.content,
-            timestamp: msg.timestamp
-          })),
-          user_context: {
-            portfolio_value: totalValue,
-            portfolio_change: totalChangePercent24h,
-            assets_count: assets.length,
-            top_cryptos: topCryptos.slice(0, 5)
-          }
-        })
+        body: JSON.stringify(requestBody)
       });
+
+      console.log('📡 Response status:', response.status, response.statusText);
 
       if (response.ok) {
         const aiData = await response.json();
         console.log('✅ Real AI Response received from:', aiData.source);
+        console.log('🤖 AI Response:', aiData.response.substring(0, 100) + '...');
+        
+        setAiStatus('online');
+        
+        return {
+          id: Date.now().toString(),
+          type: 'bot',
+          content: `🤖 **Real AI Response** (Source: ${aiData.source})\n\n${aiData.response}`,
+          timestamp: new Date(),
+          suggestions: aiData.suggestions || [],
+          tools: generateToolsFromResponse(aiData.response),
+          alerts: generateAlertsFromResponse(aiData.response),
+        };
+      } else {
+        const errorText = await response.text();
+        console.error('❌ AI Backend Error:', response.status, errorText);
+        throw new Error(`Backend error: ${response.status}`);
+      }
+
+      if (response.ok) {
+        const aiData = await response.json();
+        console.log('✅ Real AI Response received:', aiData);
+        console.log('🎯 Response source:', aiData.source);
+        console.log('📝 Response length:', aiData.response?.length || 0, 'characters');
+        
         setAiStatus('online');
         
         return {
@@ -144,99 +190,33 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
           alerts: generateAlertsFromResponse(aiData.response),
         };
       } else {
-        throw new Error('AI backend unavailable');
+        const errorText = await response.text();
+        console.error('❌ Backend response error:', response.status, errorText);
+        throw new Error(`AI backend error: ${response.status} - ${errorText}`);
       }
     } catch (error) {
-      console.warn('⚠️ AI backend error, using enhanced fallback:', error);
-      setAiStatus('fallback');
-      return await generateEnhancedFallback(userMessage);
-    }
-  };
-
-  const generateEnhancedFallback = async (userMessage: string): Promise<ChatMessage> => {
-    // Simulate AI thinking time
-    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
-
-    const message = userMessage.toLowerCase();
-    const timestamp = new Date().toLocaleTimeString();
-    
-    const dynamicIntros = [
-      "🤖 **Enhanced AI Analysis**",
-      "🧠 **Smart Crypto Assistant**",
-      "⚡ **Intelligent Response**",
-      "🔮 **AI-Powered Insights**"
-    ];
-    
-    const intro = dynamicIntros[Math.floor(Math.random() * dynamicIntros.length)];
-    
-    let response = '';
-    let suggestions: string[] = [];
-    
-    if (message.includes('bitcoin') || message.includes('btc')) {
-      const btc = topCryptos.find(crypto => crypto.symbol === 'BTC');
-      const price = btc ? btc.price : 119000;
-      const change = btc ? btc.priceChangePercent24h : 2.1;
+      console.error('💥 AI backend connection failed:', error);
+      setAiStatus('offline');
       
-      response = `${intro} • ${timestamp}\n\n` +
-        `🚀 **Bitcoin Intelligence Report:**\n\n` +
-        `💰 **Current State:**\n` +
-        `• Price: $${price.toLocaleString()}\n` +
-        `• 24h Change: ${change.toFixed(2)}% ${change >= 0 ? '🟢' : '🔴'}\n` +
-        `• Trend: ${change > 2 ? 'Strong Bullish 🚀' : change > 0 ? 'Bullish 📈' : change < -2 ? 'Bearish 📉' : 'Neutral ⚖️'}\n\n` +
-        `🧠 **AI Assessment:**\n` +
-        `${change > 5 ? 'Strong momentum detected - consider taking profits at resistance levels' : 
-          change < -5 ? 'Potential accumulation opportunity - good for DCA strategy' : 
-          'Stable conditions - continue regular investment plan'}\n\n` +
-        `⚡ **This response is dynamically generated with real market data!**\n\n` +
-        `🔴 *Note: Full AI backend temporarily unavailable - enhanced fallback active*`;
-        
-      suggestions = ['Technical analysis', 'Price predictions', 'Compare with ETH', 'Set BTC alert'];
-    } 
-    else if (message.includes('portfolio')) {
-      response = `${intro} • ${timestamp}\n\n` +
-        `💼 **Smart Portfolio Analysis:**\n\n` +
-        `📊 **Your Portfolio:**\n` +
-        `• Total Value: $${totalValue.toLocaleString()}\n` +
-        `• 24h Change: ${totalChangePercent24h.toFixed(2)}%\n` +
-        `• Assets: ${assets.length} cryptocurrencies\n\n` +
-        `🧠 **AI Recommendation:**\n` +
-        `${totalChangePercent24h > 10 ? 'Strong performance! Consider rebalancing and taking some profits.' :
-          totalChangePercent24h < -10 ? 'Temporary drawdown - good time for strategic accumulation.' :
-          'Steady performance - maintain current strategy with regular DCA.'}\n\n` +
-        `⚡ **Personalized analysis based on your actual portfolio data!**\n\n` +
-        `🔴 *Note: Full AI capabilities will return when backend reconnects*`;
-        
-      suggestions = ['Optimize portfolio', 'Risk analysis', 'Rebalancing tips', 'Add new assets'];
+      return {
+        id: Date.now().toString(),
+        type: 'bot',
+        content: `🚨 **Backend Connection Failed!**\n\n` +
+          `❌ **Error**: Could not connect to AI backend\n\n` +
+          `🔧 **Fix Steps:**\n` +
+          `1. Make sure backend is running: \`python simple_backend.py\`\n` +
+          `2. Check backend is at: http://localhost:8000\n` +
+          `3. Verify API key is configured\n` +
+          `4. Check console for backend errors\n\n` +
+          `**I REFUSE to give pre-defined responses!**\n` +
+          `Only real AI intelligence allowed! 🤖✨\n\n` +
+          `Error details: ${error}`,
+        timestamp: new Date(),
+        suggestions: ['Start backend', 'Check API key', 'Restart app', 'Check logs'],
+        tools: [],
+        alerts: [],
+      };
     }
-    else {
-      response = `${intro} • ${timestamp}\n\n` +
-        `👋 I understand you're asking about: "${userMessage}"\n\n` +
-        `🤖 **What I can do right now:**\n` +
-        `• 📊 Real-time market analysis\n` +
-        `• 💰 Portfolio assessments\n` +
-        `• 🧮 Profit/loss calculations\n` +
-        `• 📈 Trend analysis\n` +
-        `• 🎯 Investment strategies\n\n` +
-        `💡 **Try asking:**\n` +
-        `"Analyze Bitcoin" | "Review my portfolio" | "Best altcoins" | "Market outlook"\n\n` +
-        `⚡ **Each response is unique and data-driven!**\n\n` +
-        `🔴 *Backend AI will provide even smarter responses when reconnected*`;
-        
-      suggestions = ['Bitcoin analysis', 'Portfolio review', 'Market trends', 'Investment tips'];
-    }
-
-    return {
-      id: Date.now().toString(),
-      type: 'bot',
-      content: response,
-      timestamp: new Date(),
-      suggestions,
-      tools: generateToolsFromResponse(response),
-      alerts: [{ 
-        type: 'warning', 
-        message: aiStatus === 'fallback' ? 'Enhanced fallback mode - real AI will return shortly' : 'AI backend connecting...'
-      }],
-    };
   };
 
   const generateToolsFromResponse = (response: string): any[] => {
@@ -380,7 +360,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
           <div className="relative">
             <Brain className="w-6 h-6" />
             <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full animate-ping ${
-              aiStatus === 'online' ? 'bg-green-400' : aiStatus === 'fallback' ? 'bg-yellow-400' : 'bg-red-400'
+              aiStatus === 'online' ? 'bg-green-400' : 'bg-red-400'
             }`}></div>
           </div>
         </button>
@@ -408,8 +388,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
             <div>
               <h3 className="font-bold text-white">Real AI Crypto Assistant 🚀</h3>
               <p className="text-xs text-blue-100">
-                {aiStatus === 'online' ? '🟢 AI Backend Online' : 
-                 aiStatus === 'fallback' ? '🟡 Enhanced Fallback' : '🔴 Reconnecting...'}
+                {aiStatus === 'online' ? '🟢 Real AI Backend Online' : '🔴 Backend Disconnected'}
               </p>
             </div>
           </div>
@@ -561,7 +540,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                       </div>
                       <p className="text-xs text-slate-400 mt-1">
-                        {aiStatus === 'online' ? 'Real AI is thinking...' : 'Enhanced AI processing...'}
+                        {aiStatus === 'online' ? 'Real AI is thinking...' : 'Attempting to connect...'}
                       </p>
                     </div>
                   </div>
@@ -609,16 +588,16 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                 <div className="flex items-center space-x-4">
                   <p className="text-xs text-slate-500 flex items-center">
                     <Brain className="w-3 h-3 mr-1" />
-                    {aiStatus === 'online' ? 'Real AI • Live data' : 'Enhanced fallback • Real data'}
+                    {aiStatus === 'online' ? 'Real AI • Live data' : 'Backend Error • Check connection'}
                   </p>
                   <div className="flex items-center space-x-1">
                     <div className={`w-2 h-2 rounded-full animate-pulse ${
-                      aiStatus === 'online' ? 'bg-green-400' : 'bg-yellow-400'
+                      aiStatus === 'online' ? 'bg-green-400' : 'bg-red-400'
                     }`}></div>
                     <span className={`text-xs ${
-                      aiStatus === 'online' ? 'text-green-400' : 'text-yellow-400'
+                      aiStatus === 'online' ? 'text-green-400' : 'text-red-400'
                     }`}>
-                      {aiStatus === 'online' ? 'AI Online' : 'Fallback'}
+                      {aiStatus === 'online' ? 'AI Online' : 'Offline'}
                     </span>
                   </div>
                 </div>

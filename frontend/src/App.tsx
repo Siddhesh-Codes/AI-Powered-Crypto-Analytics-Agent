@@ -14,7 +14,6 @@ import LandingPage from './pages/LandingPage';
 import Dashboard from './pages/Dashboard';
 import Analytics from './pages/Analytics';
 import Portfolio from './pages/Portfolio';
-import Predictions from './pages/Predictions';
 import Auth from './pages/Auth';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
@@ -29,7 +28,7 @@ import Layout from './components/Layout/Layout';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 
 // Store
-import { useAuthStore } from './store/authStore';
+// import { useAuthStore } from './store/authStore'; // Currently unused
 
 // Styles
 import './index.css';
@@ -100,16 +99,6 @@ function App() {
               }
             />
             <Route
-              path="/predictions"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <Predictions />
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            <Route
               path="/settings"
               element={
                 <ProtectedRoute>
@@ -152,7 +141,7 @@ function App() {
               }
             />
             <Route
-              path="/signals"
+              path="/trading-signals"
               element={
                 <ProtectedRoute>
                   <Layout>

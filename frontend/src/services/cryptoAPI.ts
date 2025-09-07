@@ -4,7 +4,7 @@ const COINGECKO_API_URL = 'https://api.coingecko.com/api/v3';
 
 // Configuration flags
 const USE_REAL_API = true; // Set to true for CoinGecko live data
-const API_RATE_LIMIT_DELAY = 1000; // 1 second between requests to avoid rate limits
+// const API_RATE_LIMIT_DELAY = 1000; // 1 second between requests to avoid rate limits (currently unused)
 
 export interface CryptoListing {
   id: number;
@@ -208,7 +208,7 @@ class CryptoAPI {
   async getCryptoListings(limit: number = 100): Promise<CryptoListing[]> {
     try {
       console.log('Attempting to fetch crypto listings from backend...');
-      const response = await fetch(`${this.baseURL}/api/v1/crypto/listings?limit=${limit}`);
+      const response = await fetch(`${this.baseURL}/api/crypto/prices`);
       if (!response.ok) {
         throw new Error('Failed to fetch crypto listings');
       }
@@ -253,7 +253,7 @@ class CryptoAPI {
   async getMarketData(): Promise<GlobalMarketData | null> {
     try {
       console.log('Attempting to fetch global market data from backend...');
-      const response = await fetch(`${this.baseURL}/api/v1/crypto/global-metrics`);
+      const response = await fetch(`${this.baseURL}/api/market/data`);
       if (!response.ok) {
         throw new Error('Failed to fetch market data');
       }
@@ -295,7 +295,7 @@ class CryptoAPI {
 
   async getCryptoQuote(symbol: string): Promise<MarketData | null> {
     try {
-      const response = await fetch(`${this.baseURL}/api/v1/crypto/quote/${symbol}`);
+      const response = await fetch(`${this.baseURL}/api/crypto/prices`);
       if (!response.ok) {
         throw new Error(`Failed to fetch quote for ${symbol}`);
       }
@@ -315,7 +315,7 @@ class CryptoAPI {
 
   async searchCrypto(query: string): Promise<CryptoListing[]> {
     try {
-      const response = await fetch(`${this.baseURL}/api/v1/crypto/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch(`${this.baseURL}/api/crypto/prices`);
       if (!response.ok) {
         throw new Error('Failed to search crypto');
       }
@@ -392,7 +392,7 @@ class CryptoAPI {
     // Update price and related metrics
     const newPrice = listing.quote.USD.price * priceMultiplier;
     const priceChange = newPrice - listing.quote.USD.price;
-    const priceChangePercent = (priceChange / listing.quote.USD.price) * 100;
+    // const priceChangePercent = (priceChange / listing.quote.USD.price) * 100; // Currently unused
     
     // Update volume with realistic fluctuation (inverse correlation with price sometimes)
     const volumeFluctuation = Math.sin(fluctuationSeed * 1.3 + listing.id) * 0.25; // Max 25% volume change
