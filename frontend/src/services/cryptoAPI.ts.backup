@@ -1,44 +1,331 @@
-// API service for crypto data with real-time CoinGecko integration
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
+
+// Configuration constants
+const USE_REAL_API = process.env.REACT_APP_USE_REAL_API === 'true';
 const COINGECKO_API_URL = 'https://api.coingecko.com/api/v3';
 
-// Configuration flags
-const USE_REAL_API = true; // Set to true for CoinGecko live data
-// const API_RATE_LIMIT_DELAY = 1000; // 1 second between requests to avoid rate limits (currently unused)
-
+// Missing interfaces
 export interface CryptoListing {
-  id: number;
-  name: string;
+  id: string;
   symbol: string;
-  slug: string;
-  cmc_rank: number;
-  num_market_pairs: number;
-  circulating_supply: number;
-  total_supply: number;
-  max_supply: number | null;
-  last_updated: string;
-  date_added: string;
-  tags: string[];
-  platform: any;
-  quote: {
-    USD: {
-      price: number;
-      volume_24h: number;
-      volume_change_24h: number;
-      percent_change_1h: number;
-      percent_change_24h: number;
-      percent_change_7d: number;
-      percent_change_30d: number;
-      percent_change_60d: number;
-      percent_change_90d: number;
-      market_cap: number;
-      market_cap_dominance: number;
-      fully_diluted_market_cap: number;
-      last_updated: string;
-    };
-  };
+  name: string;
+  image?: string;
+  current_price: number;
+  market_cap: number;
+  market_cap_rank?: number;
+  fully_diluted_valuation?: number;
+  total_volume: number;
+  high_24h?: number;
+  low_24h?: number;
+  price_change_24h: number;
+  price_change_percentage_24h: number;
+  price_change_percentage_1h_in_currency?: number;
+  price_change_percentage_7d_in_currency?: number;
+  market_cap_change_24h?: number;
+  market_cap_change_percentage_24h?: number;
+  circulating_supply?: number;
+  total_supply?: number;
+  max_supply?: number;
+  ath?: number;
+  ath_change_percentage?: number;
+  ath_date?: string;
+  atl?: number;
+  atl_change_percentage?: number;
+  atl_date?: string;
+  last_updated?: string;
 }
 
+export interface TechnicalIndicatorData {
+  current_price: number;
+  price_change_24h: number;
+  volume: number;
+  market_cap: number;
+  technical_indicators: {
+    rsi: number;
+    macd: {
+      macd: number;
+      signal: number;
+      histogram: number;
+    };
+    bollinger_bands: {
+      upper: number;
+      middle: number;
+      lower: number;
+    };
+    sma_20: number;
+    sma_50: number;
+    ema_12: number;
+    ema_26: number;
+    stochastic: {
+      k: number;
+      d: number;
+    };
+    williams_r: number;
+    atr: number;
+  };
+  trading_signals: Array<{
+    indicator: string;
+    signal: 'BUY' | 'SELL' | 'HOLD';
+    reason: string;
+    strength: number;
+  }>;
+  analysis: string;
+}
+
+export interface PriceData {
+  coin_id: string;
+  symbol: string;
+  name: string;
+  price: number;
+  change_24h: number;
+  volume_24h: number;
+  timestamp: string;
+}
+
+export interface NewsItem {
+  title: string;
+  description: string;
+  url: string;
+  publishedAt: string;
+  sentiment?: 'positive' | 'negative' | 'neutral';
+}
+
+/**
+ * Fetch technical indicators with proper error handling and fallbacks
+ */
+export const fetchTechnicalIndicators = async (coinId: string): Promise<TechnicalIndicatorData> => {
+  try {
+    console.log(`🔍 Fetching technical indicators for: ${coinId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/api/technical-indicators/${coinId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Technical indicators data received:', data);
+    
+    // Return real data if available, otherwise return mock data for development
+    if (data && typeof data === 'object') {
+      return data;
+    }
+    
+    throw new Error('Invalid data format received');
+    
+  } catch (error) {
+    console.error('❌ Error fetching technical indicators:', error);
+    
+    // Return mock data with proper structure for development/fallback
+    return generateMockTechnicalData(coinId);
+  }
+};
+
+/**
+ * Generate mock technical data with realistic values
+ */
+const generateMockTechnicalData = (coinId: string): TechnicalIndicatorData => {
+  const basePrice = coinId === 'bitcoin' ? 45000 : coinId === 'ethereum' ? 3000 : 1;
+  const change = (Math.random() - 0.5) * 10; // -5% to +5%
+  
+  return {
+    current_price: basePrice * (1 + change / 100),
+    price_change_24h: change,
+    volume: Math.random() * 1000000000,
+    market_cap: basePrice * 19000000 * (1 + change / 100),
+    technical_indicators: {
+      rsi: 30 + Math.random() * 40, // 30-70 range
+      macd: {
+        macd: (Math.random() - 0.5) * 100,
+        signal: (Math.random() - 0.5) * 80,
+        histogram: (Math.random() - 0.5) * 20,
+      },
+      bollinger_bands: {
+        upper: basePrice * 1.05,
+        middle: basePrice,
+        lower: basePrice * 0.95,
+      },
+      sma_20: basePrice * (0.98 + Math.random() * 0.04),
+      sma_50: basePrice * (0.96 + Math.random() * 0.08),
+      ema_12: basePrice * (0.99 + Math.random() * 0.02),
+      ema_26: basePrice * (0.97 + Math.random() * 0.06),
+      stochastic: {
+        k: Math.random() * 100,
+        d: Math.random() * 100,
+      },
+      williams_r: -Math.random() * 100,
+      atr: basePrice * 0.02 * Math.random(),
+    },
+    trading_signals: [
+      {
+        indicator: 'RSI',
+        signal: Math.random() > 0.5 ? 'BUY' : 'HOLD',
+        reason: 'RSI indicates oversold conditions',
+        strength: 0.7 + Math.random() * 0.3,
+      },
+      {
+        indicator: 'MACD',
+        signal: Math.random() > 0.3 ? 'BUY' : 'SELL',
+        reason: 'MACD line crossed above signal line',
+        strength: 0.6 + Math.random() * 0.4,
+      },
+    ],
+    analysis: `Based on current technical analysis for ${coinId.toUpperCase()}, the asset shows ${change > 0 ? 'bullish' : 'bearish'} momentum with moderate volatility. Key support levels are holding, suggesting potential for ${change > 0 ? 'continued upward movement' : 'recovery in the near term'}.`,
+  };
+};
+
+/**
+ * Fetch market data for multiple cryptocurrencies
+ */
+export const fetchMarketData = async (coinIds: string[] = ['bitcoin', 'ethereum']): Promise<PriceData[]> => {
+  try {
+    console.log('🔍 Fetching market data for:', coinIds);
+    
+    const response = await fetch(`${API_BASE_URL}/api/market/data?coins=${coinIds.join(',')}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Market data received:', data);
+    
+    if (Array.isArray(data)) {
+      return data;
+    }
+    
+    throw new Error('Invalid data format received');
+    
+  } catch (error) {
+    console.error('❌ Error fetching market data:', error);
+    
+    // Return mock data for development/fallback
+    return generateMockMarketData(coinIds);
+  }
+};
+
+/**
+ * Generate mock market data
+ */
+const generateMockMarketData = (coinIds: string[]): PriceData[] => {
+  const coinData = {
+    bitcoin: { name: 'Bitcoin', symbol: 'BTC', basePrice: 45000 },
+    ethereum: { name: 'Ethereum', symbol: 'ETH', basePrice: 3000 },
+    cardano: { name: 'Cardano', symbol: 'ADA', basePrice: 0.5 },
+    solana: { name: 'Solana', symbol: 'SOL', basePrice: 100 },
+    polkadot: { name: 'Polkadot', symbol: 'DOT', basePrice: 8 },
+  };
+
+  return coinIds.map(coinId => {
+    const coin = coinData[coinId as keyof typeof coinData] || { name: coinId, symbol: coinId.toUpperCase(), basePrice: 1 };
+    const change = (Math.random() - 0.5) * 10;
+    
+    return {
+      coin_id: coinId,
+      symbol: coin.symbol,
+      name: coin.name,
+      price: coin.basePrice * (1 + change / 100),
+      change_24h: change,
+      volume_24h: Math.random() * 1000000000,
+      timestamp: new Date().toISOString(),
+    };
+  });
+};
+
+/**
+ * Fetch cryptocurrency news
+ */
+export const fetchCryptoNews = async (limit: number = 10): Promise<NewsItem[]> => {
+  try {
+    console.log('🔍 Fetching crypto news...');
+    
+    const response = await fetch(`${API_BASE_URL}/api/news?limit=${limit}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ News data received:', data);
+    
+    if (Array.isArray(data)) {
+      return data;
+    }
+    
+    throw new Error('Invalid data format received');
+    
+  } catch (error) {
+    console.error('❌ Error fetching news:', error);
+    
+    // Return mock news for development/fallback
+    return generateMockNews(limit);
+  }
+};
+
+/**
+ * Generate mock news data
+ */
+const generateMockNews = (limit: number): NewsItem[] => {
+  const mockNews = [
+    {
+      title: "Bitcoin Shows Strong Technical Indicators",
+      description: "Latest analysis suggests bullish momentum continues as BTC holds key support levels.",
+      url: "#",
+      publishedAt: new Date().toISOString(),
+      sentiment: 'positive' as const
+    },
+    {
+      title: "Ethereum Network Upgrades Drive Adoption",
+      description: "Recent improvements to the Ethereum network are attracting more institutional investors.",
+      url: "#",
+      publishedAt: new Date(Date.now() - 1800000).toISOString(),
+      sentiment: 'positive' as const
+    },
+    {
+      title: "Market Volatility Creates Trading Opportunities",
+      description: "Traders are capitalizing on increased volatility in the cryptocurrency markets.",
+      url: "#",
+      publishedAt: new Date(Date.now() - 3600000).toISOString(),
+      sentiment: 'neutral' as const
+    },
+    {
+      title: "Regulatory Concerns Impact Market Sentiment",
+      description: "New regulatory discussions are creating uncertainty among crypto investors.",
+      url: "#",
+      publishedAt: new Date(Date.now() - 7200000).toISOString(),
+      sentiment: 'negative' as const
+    },
+    {
+      title: "DeFi Protocols Show Strong Growth",
+      description: "Decentralized finance protocols continue to attract significant investment.",
+      url: "#",
+      publishedAt: new Date(Date.now() - 10800000).toISOString(),
+      sentiment: 'positive' as const
+    }
+  ];
+
+  return mockNews.slice(0, limit);
+};
+
+// Legacy interface for backward compatibility
 export interface GlobalMarketData {
   active_cryptocurrencies: number;
   total_cryptocurrencies: number;
@@ -185,23 +472,22 @@ class CryptoAPI {
 
   // Convert CryptoListing to MarketData format
   private convertToMarketData(listing: CryptoListing): MarketData {
-    const usd = listing.quote.USD;
     return {
-      id: listing.id.toString(),
+      id: listing.id,
       symbol: listing.symbol,
       name: listing.name,
-      price: usd.price,
-      priceChange24h: (usd.price * usd.percent_change_24h) / 100,
-      priceChangePercent24h: usd.percent_change_24h,
-      marketCap: usd.market_cap,
-      marketCapChange24h: (usd.market_cap * usd.percent_change_24h) / 100,
-      volume24h: usd.volume_24h,
-      volumeChange24h: usd.volume_change_24h,
-      circulatingSupply: listing.circulating_supply,
-      totalSupply: listing.total_supply,
-      maxSupply: listing.max_supply,
-      rank: listing.cmc_rank,
-      lastUpdated: listing.last_updated,
+      price: listing.current_price,
+      priceChange24h: listing.price_change_24h,
+      priceChangePercent24h: listing.price_change_percentage_24h,
+      marketCap: listing.market_cap,
+      marketCapChange24h: listing.market_cap_change_24h || 0,
+      volume24h: listing.total_volume,
+      volumeChange24h: 0,
+      circulatingSupply: listing.circulating_supply || 0,
+      totalSupply: listing.total_supply || 0,
+      maxSupply: listing.max_supply || null,
+      rank: listing.market_cap_rank || 0,
+      lastUpdated: listing.last_updated || new Date().toISOString(),
     };
   }
 
@@ -470,42 +756,39 @@ class CryptoAPI {
                                 listing.symbol === 'USDT' || listing.symbol === 'USDC' || listing.symbol === 'DAI' ? 0.02 :
                                 listing.symbol === 'DOGE' || listing.symbol === 'SHIB' ? 4.5 : 2.0;
 
+    // Convert string ID to number for math operations
+    const numericId = parseInt(listing.id) || 1;
+
     // Combine multiple wave patterns for more realistic price movements
-    const wave1 = Math.sin(fluctuationSeed + listing.id) * 0.6;
-    const wave2 = Math.sin(fluctuationSeed * 1.7 + listing.id * 2) * 0.3;
-    const wave3 = Math.sin(fluctuationSeed * 0.5 + listing.id * 0.5) * 0.1;
+    const wave1 = Math.sin(fluctuationSeed + numericId) * 0.6;
+    const wave2 = Math.sin(fluctuationSeed * 1.7 + numericId * 2) * 0.3;
+    const wave3 = Math.sin(fluctuationSeed * 0.5 + numericId * 0.5) * 0.1;
     const combinedWave = wave1 + wave2 + wave3;
     
     const fluctuation = combinedWave * volatilityMultiplier * 0.004; // Max 0.4% change per update
     const priceMultiplier = 1 + fluctuation;
     
-    // Update price and related metrics
-    const newPrice = listing.quote.USD.price * priceMultiplier;
-    const priceChange = newPrice - listing.quote.USD.price;
-    // const priceChangePercent = (priceChange / listing.quote.USD.price) * 100; // Currently unused
+    // Update price and related metrics using current CryptoListing structure
+    const newPrice = listing.current_price * priceMultiplier;
+    const priceChange = newPrice - listing.current_price;
     
     // Update volume with realistic fluctuation (inverse correlation with price sometimes)
-    const volumeFluctuation = Math.sin(fluctuationSeed * 1.3 + listing.id) * 0.25; // Max 25% volume change
-    const newVolume = listing.quote.USD.volume_24h * (1 + volumeFluctuation);
+    const volumeFluctuation = Math.sin(fluctuationSeed * 1.3 + numericId) * 0.25; // Max 25% volume change
+    const newVolume = listing.total_volume * (1 + volumeFluctuation);
     
     // Simulate more realistic percentage changes
-    const hourlyChange = listing.quote.USD.percent_change_1h + (fluctuation * 30);
-    const dailyChange = listing.quote.USD.percent_change_24h + (fluctuation * 5);
+    const hourlyChange = (listing.price_change_percentage_1h_in_currency || 0) + (fluctuation * 30);
+    const dailyChange = listing.price_change_percentage_24h + (fluctuation * 5);
     
     return {
       ...listing,
+      current_price: Math.max(newPrice, 0.000001), // Prevent negative prices
+      price_change_24h: priceChange,
+      price_change_percentage_24h: Math.max(Math.min(dailyChange, 100), -90), // Cap at +100%/-90%
+      price_change_percentage_1h_in_currency: Math.max(Math.min(hourlyChange, 50), -50), // Cap at ±50%
+      total_volume: Math.max(newVolume, 1000), // Minimum volume
+      market_cap: newPrice * (listing.circulating_supply || 0),
       last_updated: new Date().toISOString(),
-      quote: {
-        USD: {
-          ...listing.quote.USD,
-          price: Math.max(newPrice, 0.000001), // Prevent negative prices
-          volume_24h: Math.max(newVolume, 1000), // Minimum volume
-          percent_change_1h: Math.max(Math.min(hourlyChange, 50), -50), // Cap at ±50%
-          percent_change_24h: Math.max(Math.min(dailyChange, 100), -90), // Cap at +100%/-90%
-          market_cap: newPrice * listing.circulating_supply,
-          last_updated: new Date().toISOString(),
-        }
-      }
     };
   }
 
@@ -609,23 +892,37 @@ class CryptoAPI {
 
   // Mock data for demo purposes
   private getMockCryptoListings(): CryptoListing[] {
-    // Real cryptocurrency data with current approximate prices (as of July 2025)
+    // Simple mock data that matches the CryptoListing interface
     return [
       {
-        id: 1,
+        id: "1",
         name: "Bitcoin",
         symbol: "BTC",
-        slug: "bitcoin",
-        cmc_rank: 1,
-        num_market_pairs: 10000,
+        current_price: 118500,
+        market_cap: 2340000000000,
+        total_volume: 38000000000,
+        price_change_24h: 3500,
+        price_change_percentage_24h: 3.2,
         circulating_supply: 19750000,
         total_supply: 19750000,
         max_supply: 21000000,
+        market_cap_rank: 1,
         last_updated: new Date().toISOString(),
-        date_added: "2013-04-28T00:00:00.000Z",
-        tags: ["mineable", "pow", "sha-256"],
-        platform: null,
-        quote: {
+      },
+      {
+        id: "2",
+        name: "Ethereum",
+        symbol: "ETH",
+        current_price: 3800,
+        market_cap: 456000000000,
+        total_volume: 15000000000,
+        price_change_24h: 120,
+        price_change_percentage_24h: 3.27,
+        circulating_supply: 120280000,
+        total_supply: 120280000,
+        max_supply: undefined,
+        market_cap_rank: 2,
+        last_updated: new Date().toISOString(),
           USD: {
             price: 118500.00, // Updated current BTC price (~$118.5k)
             volume_24h: 38000000000,

@@ -71,13 +71,13 @@ const LandingPage: React.FC = () => {
             </div>
             <div className="flex items-center space-x-4">
               <Link 
-                to="/auth" 
+                to="/login" 
                 className="text-slate-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors"
               >
                 Sign In
               </Link>
               <Link 
-                to="/auth?force=true" 
+                to="/register" 
                 className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105"
               >
                 Get Started

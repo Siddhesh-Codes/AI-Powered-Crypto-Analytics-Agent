@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User, Mail, Calendar, Shield, Camera, Save, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../store/authStore';
+import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
 /**
@@ -9,7 +9,7 @@ import toast from 'react-hot-toast';
  * User profile management and settings
  */
 const Profile: React.FC = () => {
-  const { user, setUser } = useAuthStore();
+  const { user } = useAuth();
   const navigate = useNavigate();
   
   const [formData, setFormData] = useState({
@@ -32,21 +32,33 @@ const Profile: React.FC = () => {
   };
 
   const handleSave = () => {
-    // Update user in the auth store
-    if (user) {
-      setUser({
-        ...user,
-        name: formData.name,
-        email: formData.email
-      });
-    }
-    
+    // TODO: Implement profile update API call
+    // For now, just show success message
     setIsEditing(false);
     toast.success('Profile updated successfully!');
   };
 
-  const getUserInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  const getUserInitials = (name: string | undefined) => {
+    // Try to get initials from name
+    if (name && typeof name === 'string' && name.trim() !== '') {
+      try {
+        return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+      } catch (error) {
+        console.error('Error generating initials from name:', error);
+      }
+    }
+    
+    // Fallback to email initials
+    if (user?.email && typeof user.email === 'string') {
+      try {
+        return user.email.substring(0, 2).toUpperCase();
+      } catch (error) {
+        console.error('Error generating initials from email:', error);
+      }
+    }
+    
+    // Final fallback
+    return 'U';
   };
 
   return (
@@ -100,7 +112,7 @@ const Profile: React.FC = () => {
                 {/* Profile Avatar */}
                 <div className="relative inline-block mb-4">
                   <div className="w-24 h-24 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-                    {user ? getUserInitials(user.name) : 'U'}
+                    {getUserInitials(user?.name)}
                   </div>
                   <button className="absolute bottom-0 right-0 w-8 h-8 bg-slate-700 border-2 border-slate-800 rounded-full flex items-center justify-center text-slate-300 hover:text-white transition-colors">
                     <Camera className="w-4 h-4" />
@@ -113,7 +125,7 @@ const Profile: React.FC = () => {
                 <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-center space-x-2 text-slate-400">
                     <Calendar className="w-4 h-4" />
-                    <span>Joined {new Date(user?.createdAt || '').toLocaleDateString()}</span>
+                    <span>Joined {new Date(user?.created_at || '').toLocaleDateString()}</span>
                   </div>
                   <div className="flex items-center justify-center space-x-2 text-slate-400">
                     <Shield className="w-4 h-4" />

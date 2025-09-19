@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 export interface User {
   id: string;
   email: string;
-  name: string;
+  name?: string;
   avatar?: string;
   createdAt: string;
   otpEnabled?: boolean;
@@ -16,10 +16,12 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   pendingOtpEmail: string | null;
+  isRegistrationFlow: boolean; // Track if we're in registration or login flow
   login: (email: string, password: string) => Promise<{ requiresOtp?: boolean; email?: string }>;
   register: (name: string, email: string, password: string) => Promise<void>;
-  verifyOtp: (otp: string) => Promise<void>;
+  verifyOtp: (otp: string, email?: string) => Promise<void>;
   resendOtp: () => Promise<void>;
+  requestOtp: (email: string) => Promise<void>;
   enableOtp: (email: string) => Promise<void>;
   logout: () => void;
   setUser: (user: User) => void;
@@ -34,6 +36,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: false,
       pendingOtpEmail: null,
+      isRegistrationFlow: false,
 
       login: async (email: string, password: string) => {
         set({ isLoading: true });
@@ -49,19 +52,20 @@ export const useAuthStore = create<AuthState>()(
             body: JSON.stringify({ email, password }),
           });
 
+          const data = await response.json();
+          
           if (response.ok) {
-            const data = await response.json();
-            
             // Check if OTP is required
             if (data.requiresOtp) {
               set({ 
                 pendingOtpEmail: email,
-                isLoading: false 
+                isLoading: false,
+                isRegistrationFlow: false // This is login flow
               });
               return { requiresOtp: true, email };
             }
             
-            // Normal login success
+            // Normal login success (shouldn't happen with our OTP-required setup)
             const { user, token } = data;
             set({
               user,
@@ -74,68 +78,25 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem('token', token);
             console.log('Backend login successful for:', user.email);
             return {};
+          } else {
+            set({ isLoading: false });
+            const errorMessage = data.detail || data.message || 'Login failed';
+            throw new Error(errorMessage);
           }
         } catch (error) {
-          console.warn('Backend not available, using local authentication');
-        }
-
-        // Fallback local authentication
-        const validCredentials = [
-          { email: 'test@example.com', password: 'password', name: 'Test User', otpEnabled: true },
-          { email: 'admin@crypto.com', password: 'admin123', name: 'Admin User', otpEnabled: false },
-          { email: 'demo@demo.com', password: 'demo', name: 'Demo User', otpEnabled: false },
-        ];
-
-        console.log('Checking local credentials for:', email);
-        const user = validCredentials.find(
-          cred => cred.email.toLowerCase() === email.toLowerCase() && cred.password === password
-        );
-
-        if (user) {
-          // Check if OTP is enabled for this user
-          if (user.otpEnabled) {
-            set({ 
-              pendingOtpEmail: email,
-              isLoading: false 
-            });
-            return { requiresOtp: true, email };
-          }
-
-          const mockUser: User = {
-            id: 'user_' + Date.now(),
-            email: user.email,
-            name: user.name,
-            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=3b82f6&color=fff`,
-            createdAt: new Date().toISOString(),
-            otpEnabled: user.otpEnabled
-          };
-
-          const mockToken = 'local_token_' + Date.now();
-
-          set({
-            user: mockUser,
-            token: mockToken,
-            isAuthenticated: true,
-            isLoading: false,
-            pendingOtpEmail: null
-          });
-
-          localStorage.setItem('token', mockToken);
-          console.log('Local login successful for:', user.email);
-          console.log('Auth state after login:', { user: mockUser, token: mockToken, isAuthenticated: true });
-          return {};
-        } else {
           set({ isLoading: false });
-          console.error('Login failed - invalid credentials for:', email);
-          throw new Error('Invalid credentials');
+          if (error instanceof Error) {
+            throw error;
+          }
+          throw new Error('Login failed - backend not available');
         }
       },
 
       register: async (name: string, email: string, password: string) => {
         set({ isLoading: true });
         try {
-          // Try backend first
-          const response = await fetch('http://localhost:8000/api/auth/register', {
+          // Always use backend for registration (sends OTP)
+          const response = await fetch('http://localhost:8000/api/auth/register/start', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -143,73 +104,62 @@ export const useAuthStore = create<AuthState>()(
             body: JSON.stringify({ name, email, password }),
           });
 
+          const data = await response.json();
+          
           if (response.ok) {
-            const data = await response.json();
-            const { user, token } = data;
-
-            set({
-              user,
-              token,
-              isAuthenticated: true,
-              isLoading: false,
-              pendingOtpEmail: null
-            });
-
-            localStorage.setItem('token', token);
-            return;
+            if (data.requires_otp || data.requiresOtp) {
+              set({ 
+                pendingOtpEmail: email, 
+                isLoading: false,
+                isRegistrationFlow: true // This is registration flow
+              });
+              console.log('✅ Registration OTP sent, awaiting verification');
+              return;
+            } else {
+              set({ isLoading: false });
+              throw new Error('Registration should require OTP verification');
+            }
+          } else {
+            set({ isLoading: false });
+            const errorMessage = data.detail || data.message || 'Registration failed';
+            throw new Error(errorMessage);
           }
         } catch (error) {
-          console.warn('Backend not available, using local registration');
-        }
-
-        // Fallback local registration
-        if (name && email && password) {
-          const mockUser: User = {
-            id: 'user_' + Date.now(),
-            email: email,
-            name: name,
-            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=3b82f6&color=fff`,
-            createdAt: new Date().toISOString(),
-            otpEnabled: false
-          };
-
-          const mockToken = 'local_token_' + Date.now();
-
-          set({
-            user: mockUser,
-            token: mockToken,
-            isAuthenticated: true,
-            isLoading: false,
-            pendingOtpEmail: null
-          });
-
-          localStorage.setItem('token', mockToken);
-        } else {
           set({ isLoading: false });
-          throw new Error('All fields are required');
+          if (error instanceof Error) {
+            throw error;
+          }
+          throw new Error('Registration failed - backend not available');
         }
       },
 
-      verifyOtp: async (otp: string) => {
-        const { pendingOtpEmail } = get();
-        if (!pendingOtpEmail) throw new Error('No OTP verification pending');
+      verifyOtp: async (otp: string, email?: string) => {
+        const { pendingOtpEmail, isRegistrationFlow } = get();
+        const targetEmail = email || pendingOtpEmail;
+        if (!targetEmail) throw new Error('No OTP verification pending');
 
         set({ isLoading: true });
         
         try {
-          const response = await fetch('http://localhost:8000/api/auth/verify-otp', {
+          console.log('🔍 Attempting OTP verification for:', targetEmail, 'with OTP:', otp);
+          console.log('🔍 Registration flow:', isRegistrationFlow);
+          
+          // Use smart OTP verification that automatically detects the correct flow
+          console.log('🤖 Using smart OTP verification...');
+          
+          const response = await fetch('http://localhost:8000/api/auth/verify-otp-smart', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ 
-              email: pendingOtpEmail, 
-              otp 
-            }),
+            body: JSON.stringify({ email: targetEmail, otp: otp }),
           });
+
+          console.log('🔍 OTP verify response status:', response.status);
 
           if (response.ok) {
             const data = await response.json();
+            console.log('🔍 Success response data:', data);
             const { user, token } = data;
 
             set({
@@ -217,18 +167,58 @@ export const useAuthStore = create<AuthState>()(
               token,
               isAuthenticated: true,
               isLoading: false,
-              pendingOtpEmail: null
+              pendingOtpEmail: null,
+              isRegistrationFlow: false
             });
 
             localStorage.setItem('token', token);
-            console.log('OTP verification successful');
+            console.log('✅ OTP verification successful');
           } else {
             set({ isLoading: false });
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Invalid OTP');
+            try {
+              const errorData = await response.json();
+              console.error('🔍 Error response:', errorData);
+              const errorMessage = errorData.detail || errorData.message || `Request failed with status ${response.status}`;
+              throw new Error(errorMessage);
+            } catch (jsonError) {
+              console.error('🔍 Failed to parse error response:', jsonError);
+              throw new Error(`Request failed with status ${response.status}`);
+            }
           }
         } catch (error) {
           set({ isLoading: false });
+          console.error('🔍 OTP verification error:', error);
+          
+          if (error instanceof Error) {
+            throw error;
+          } else if (typeof error === 'string') {
+            throw new Error(error);
+          } else {
+            const errorMessage = (error as any)?.message || (error as any)?.detail || 'OTP verification failed';
+            throw new Error(errorMessage);
+          }
+        }
+      },
+
+      requestOtp: async (email: string) => {
+        if (!email) throw new Error('Email is required');
+        try {
+          const response = await fetch('http://localhost:8000/api/auth/resend-otp', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to send OTP');
+          }
+
+          // Set pending email so verifyOtp works without explicit email
+          set({ pendingOtpEmail: email });
+        } catch (error) {
           throw error;
         }
       },
@@ -284,7 +274,7 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           throw error;
         }
-      },
+  },
 
       logout: () => {
         set({

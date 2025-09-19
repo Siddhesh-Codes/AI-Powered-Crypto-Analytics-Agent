@@ -46,12 +46,19 @@ const Auth: React.FC = () => {
     }
   }, [pendingOtpEmail]);
 
-  // Redirect if already authenticated, unless force=true
+  // Handle force logout on mount
   useEffect(() => {
-    if (isAuthenticated && !forceAuth) {
+    if (forceAuth) {
+      if (isAuthenticated) {
+        logout();
+        toast('Please sign in again', { icon: 'ℹ️' });
+      }
+      // Remove the force parameter from URL
+      navigate('/auth', { replace: true });
+    } else if (isAuthenticated && !pendingOtpEmail) {
       navigate('/dashboard', { replace: true });
     }
-  }, [isAuthenticated, navigate, forceAuth]);
+  }, [isAuthenticated, navigate, forceAuth, logout, pendingOtpEmail]);
 
   // Handle logout for switching accounts
   const handleSwitchAccount = () => {
@@ -279,8 +286,8 @@ const Auth: React.FC = () => {
             </p>
           </div>
 
-          {/* Show this if user is already authenticated and force=true */}
-          {isAuthenticated && forceAuth && (
+          {/* Show this only if user is already authenticated but NOT in force mode and NOT pending OTP */}
+          {isAuthenticated && !forceAuth && !showOtpInput && (
             <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
               <p className="text-blue-400 text-sm mb-3">
                 You're already logged in. Would you like to:
@@ -325,8 +332,8 @@ const Auth: React.FC = () => {
             </div>
           )}
 
-          {/* Show form only if not authenticated, not in force mode, and not showing OTP */}
-          {(!isAuthenticated || !forceAuth) && !showOtpInput && (
+          {/* Show form if not authenticated OR force mode, and not showing OTP */}
+          {(!isAuthenticated || forceAuth) && !showOtpInput && (
             <>
             <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (

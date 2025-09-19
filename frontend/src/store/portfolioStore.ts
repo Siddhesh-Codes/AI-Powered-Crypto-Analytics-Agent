@@ -32,7 +32,7 @@ interface PortfolioState {
   isLoading: boolean;
   
   // Actions
-  addAsset: (asset: Omit<Asset, 'id' | 'value'>) => void;
+  addAsset: (asset: Omit<Asset, 'id' | 'value'>) => Promise<void>;
   updateAsset: (id: string, updates: Partial<Asset>) => void;
   removeAsset: (id: string) => void;
   addExchange: (exchange: Omit<Exchange, 'id' | 'isConnected' | 'lastSync'>) => void;
@@ -52,7 +52,37 @@ export const usePortfolioStore = create<PortfolioState>()(
       totalChangePercent24h: 0,
       isLoading: false,
 
-      addAsset: (assetData) => {
+      addAsset: async (assetData) => {
+        set({ isLoading: true });
+        
+        try {
+          // Try backend API
+          const token = localStorage.getItem('token');
+          const response = await fetch('http://localhost:8000/api/portfolio/assets', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(assetData),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+              set((state) => ({
+                assets: [...state.assets, data.asset],
+                isLoading: false,
+              }));
+              get().calculateTotals();
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('Error adding asset via API:', error);
+        }
+
+        // Fallback to local storage
         const asset: Asset = {
           ...assetData,
           id: Date.now().toString(),
@@ -61,6 +91,7 @@ export const usePortfolioStore = create<PortfolioState>()(
         
         set((state) => ({
           assets: [...state.assets, asset],
+          isLoading: false,
         }));
         
         get().calculateTotals();
@@ -179,7 +210,43 @@ export const usePortfolioStore = create<PortfolioState>()(
         set({ isLoading: true });
         
         try {
-          // Simulate fetching current prices
+          // Try backend API first
+          const token = localStorage.getItem('token');
+          const response = await fetch('http://localhost:8000/api/portfolio/refresh-prices', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+              // Refresh assets from backend
+              const assetsResponse = await fetch('http://localhost:8000/api/portfolio/assets', {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                },
+              });
+              
+              if (assetsResponse.ok) {
+                const assetsData = await assetsResponse.json();
+                if (assetsData.success) {
+                  set({
+                    assets: assetsData.assets,
+                    totalValue: assetsData.summary.totalValue,
+                    totalChange24h: assetsData.summary.totalChange24h,
+                    totalChangePercent24h: assetsData.summary.totalChangePercent24h,
+                    isLoading: false,
+                  });
+                  return;
+                }
+              }
+            }
+          }
+          
+          // Fallback to mock updates
           await new Promise(resolve => setTimeout(resolve, 1000));
           
           // Mock price updates

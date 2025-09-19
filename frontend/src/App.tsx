@@ -9,12 +9,15 @@ import './styles/TradingView.css';
 // Error Boundary
 import ErrorBoundary from './components/ErrorBoundary';
 
+// Authentication Context
+import { AuthProvider } from './contexts/AuthContext';
+
 // Pages
 import LandingPage from './pages/LandingPage';
 import Dashboard from './pages/Dashboard';
 import Analytics from './pages/Analytics';
 import Portfolio from './pages/Portfolio';
-import Auth from './pages/Auth';
+// import Auth from './pages/Auth'; // Removed - using Login/Register components instead
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import AuthDebug from './pages/AuthDebug';
@@ -22,6 +25,10 @@ import CryptoAnalysis from './pages/CryptoAnalysis';
 import AlertsPage from './pages/AlertsPage';
 import TradingSignalsPage from './pages/TradingSignalsPage';
 import NewsPage from './pages/NewsPage';
+
+// Authentication Components
+import Login from './components/Auth/Login';
+import Register from './components/Auth/Register';
 
 // Components
 import Layout from './components/Layout/Layout';
@@ -47,7 +54,8 @@ function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <Router>
+        <AuthProvider>
+          <Router>
         <div className="App min-h-screen bg-slate-900">
           <Toaster
             position="top-right"
@@ -64,7 +72,10 @@ function App() {
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<LandingPage />} />
-            <Route path="/auth" element={<Auth />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            {/* Redirect /auth to /login for clean authentication */}
+            <Route path="/auth" element={<Login />} />
             <Route path="/debug" element={<AuthDebug />} />
             
             {/* Protected Routes */}
@@ -160,10 +171,14 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            
+            {/* Technical Analysis Routes */}
+
           </Routes>
         </div>
-      </Router>
-    </QueryClientProvider>
+          </Router>
+        </AuthProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

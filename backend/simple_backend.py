@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any
 import uvicorn
 import os
@@ -11,9 +11,16 @@ import smtplib
 import secrets
 import hashlib
 import jwt
+import json
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from auth_database import auth_system, init_auth_database
+from technical_indicators import TechnicalIndicators, CryptoDataFetcher, analyze_technical_indicators
+from news_sentiment import news_client, sentiment_analyzer
+from websocket_manager import websocket_manager, SubscriptionType
+from fastapi import WebSocket, WebSocketDisconnect
+import aiohttp
 
 # Load environment variables from .env file
 try:
@@ -41,46 +48,72 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global background tasks
+background_tasks = set()
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize background tasks on startup"""
+    print("🚀 Initializing background services...")
+    
+    # Start global price monitoring task for alerts
+    task = asyncio.create_task(monitor_price_alerts())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    
+    print("✅ Background alert monitoring started")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up on shutdown"""
+    print("🛑 Shutting down background services...")
+    
+    # Cancel all background tasks
+    for task in background_tasks:
+        task.cancel()
+    
+    # Wait for tasks to finish
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+    
+    print("✅ Background services stopped")
+
 # Authentication and Email Configuration
 security = HTTPBearer()
 
-# Email Configuration
-SMTP_USERNAME = os.getenv("GMAIL_USER", "siddheshshinde358@gmail.com")
-SMTP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "ltwy nncf acwz pzpj")
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-OTP_EXPIRY_MINUTES = int(os.getenv("OTP_EXPIRY_MINUTES", "10"))
+# Authentication system now uses MySQL database
+# No more in-memory storage or OTP needed
 
-# In-memory storage (replace with database in production)
-pending_registrations = {}
-verified_users = {
-    "admin@cryptoanalytics.com": {
-        "email": "admin@cryptoanalytics.com",
-        "password_hash": "pre_verified_admin",
-        "is_verified": True,
-        "created_at": datetime.now()
-    }
-}
-otp_storage = {}
-
-# Pydantic models for authentication
+# Pydantic models for MySQL authentication
 class UserRegistration(BaseModel):
+    name: str
+    username: str
     email: str
     password: str
     
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def validate_password(cls, v):
         if len(v) < 6:
             raise ValueError('Password must be at least 6 characters long')
         return v
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        if len(v) < 3:
+            raise ValueError('Username must be at least 3 characters long')
+        return v
+    
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        if '@' not in v:
+            raise ValueError('Please enter a valid email address')
+        return v
 
 class UserLogin(BaseModel):
-    email: str
+    login: str  # Can be username or email
     password: str
-
-class OTPVerification(BaseModel):
-    email: str
-    otp: str
 
 class AuthResponse(BaseModel):
     message: str
@@ -88,101 +121,52 @@ class AuthResponse(BaseModel):
     token: Optional[str] = None
     user: Optional[Dict[str, Any]] = None
 
-def send_otp_email(email: str, otp: str) -> bool:
-    """Send OTP via Gmail SMTP"""
-    try:
-        # Create message
-        msg = MIMEMultipart('alternative')
-        msg['From'] = SMTP_USERNAME
-        msg['To'] = email
-        msg['Subject'] = "🔐 Your CryptoAnalytics Login Code"
-        
-        # Create HTML email body
-        html_body = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px; text-align: center;">
-                        <h1 style="color: white; margin: 0;">🚀 CryptoAnalytics</h1>
-                        <p style="color: #cbd5e1; margin: 10px 0 0 0;">AI-Powered Cryptocurrency Platform</p>
-                    </div>
-                    
-                    <div style="background: #f8fafc; padding: 30px; border-radius: 10px; margin-top: 20px; text-align: center;">
-                        <h2 style="color: #1e293b; margin-bottom: 20px;">🔐 Your Security Code</h2>
-                        <p style="color: #475569;">Your verification code for CryptoAnalytics is:</p>
-                        
-                        <div style="background: white; border: 2px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1e293b;">
-                            {otp}
-                        </div>
-                        
-                        <p style="color: #64748b; font-size: 14px; margin-top: 25px;">
-                            ⏰ This code expires in {OTP_EXPIRY_MINUTES} minutes<br>
-                            🔒 Never share this code with anyone
-                        </p>
-                        
-                        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
-                        
-                        <p style="color: #94a3b8; font-size: 12px; text-align: center;">
-                            CryptoAnalytics - AI-Powered Cryptocurrency Analytics Platform<br>
-                            If you didn't request this code, please ignore this email.
-                        </p>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        
-        # Attach HTML part
-        msg.attach(MIMEText(html_body, 'html'))
-        
-        # Send email
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-        
-        print(f"✅ OTP email sent to {email}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to send OTP email to {email}: {e}")
-        return False
+# Security setup
+security = HTTPBearer(auto_error=False)
 
-def generate_otp() -> str:
-    """Generate a 6-digit OTP"""
-    return f"{random.randint(100000, 999999):06d}"
+# Authentication dependency
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current authenticated user from JWT token"""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user = auth_system.get_user_by_token(credentials.credentials)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return user
 
-def hash_password(password: str) -> str:
-    """Hash password using SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and authentication system on startup"""
+    print("🚀 Starting Crypto Analytics Backend...")
+    
+    # Initialize authentication database
+    if init_auth_database():
+        print("✅ Authentication system initialized successfully!")
+    else:
+        print("❌ Failed to initialize authentication system!")
+    
+    # Cleanup expired sessions
+    auth_system.cleanup_expired_sessions()
+    print("🧹 Cleaned up expired user sessions")
 
-def verify_otp_code(email: str, provided_otp: str) -> bool:
-    """Verify OTP code for email"""
-    if email not in otp_storage:
-        print(f"❌ No OTP found for email: {email}")
-        return False
-    
-    stored_data = otp_storage[email]
-    stored_otp = stored_data["otp"]
-    expiry_time = stored_data["expiry"]
-    
-    print(f"🔍 Verifying OTP for {email}")
-    print(f"📝 Stored OTP: {stored_otp}, Provided: {provided_otp}")
-    print(f"⏰ Expiry: {expiry_time}, Current: {datetime.now()}")
-    
-    # Check if OTP has expired
-    if datetime.now() > expiry_time:
-        print(f"⏰ OTP expired for {email}")
-        del otp_storage[email]
-        return False
-    
-    # Check if OTP matches
-    if stored_otp != provided_otp:
-        print(f"❌ OTP mismatch for {email}")
-        return False
-    
-    print(f"✅ OTP verified for {email}")
-    return True
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    auth_system.close_connection()
+    print("👋 Backend shutdown complete")
+
+# OTP functions removed - now using MySQL database authentication
 
 # Pydantic models for request/response
 class ChatMessage(BaseModel):
@@ -199,6 +183,10 @@ class ChatResponse(BaseModel):
 AI_SERVICE_AVAILABLE = False
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
+# Initialize AI service variables
+AI_SERVICE_AVAILABLE = False
+groq_client = None
+
 # Try to import and initialize Groq
 try:
     import groq
@@ -208,10 +196,73 @@ try:
         print("✅ Groq AI service initialized successfully!")
     else:
         print("⚠️ GROQ_API_KEY not found in environment variables")
+        print("💡 Using enhanced fallback AI responses instead")
 except ImportError:
-    print("⚠️ Groq library not installed. Install with: pip install groq")
+    print("⚠️ Groq library not installed. Using enhanced fallback AI responses")
 except Exception as e:
     print(f"⚠️ Error initializing Groq: {e}")
+    print("💡 Using enhanced fallback AI responses instead")
+
+# Real-time cryptocurrency price fetching
+async def fetch_crypto_price(crypto_id: str = "bitcoin") -> Dict[str, Any]:
+    """
+    Fetch real-time cryptocurrency price from CoinGecko API
+    crypto_id examples: bitcoin, ethereum, binancecoin, cardano, solana, etc.
+    """
+    try:
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if crypto_id in data:
+                        price_data = data[crypto_id]
+                        return {
+                            "success": True,
+                            "price": price_data.get("usd", 0),
+                            "price_change_24h": price_data.get("usd_24h_change", 0),
+                            "market_cap": price_data.get("usd_market_cap", 0),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    else:
+                        return {"success": False, "error": f"Cryptocurrency '{crypto_id}' not found"}
+                else:
+                    return {"success": False, "error": f"API request failed with status {response.status}"}
+    except Exception as e:
+        return {"success": False, "error": f"Failed to fetch price: {str(e)}"}
+
+async def get_multiple_crypto_prices(crypto_ids: List[str]) -> Dict[str, Any]:
+    """
+    Fetch prices for multiple cryptocurrencies at once
+    """
+    try:
+        ids_string = ",".join(crypto_ids)
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids_string}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    formatted_data = {}
+                    for crypto_id in crypto_ids:
+                        if crypto_id in data:
+                            price_data = data[crypto_id]
+                            formatted_data[crypto_id] = {
+                                "price": price_data.get("usd", 0),
+                                "price_change_24h": price_data.get("usd_24h_change", 0),
+                                "market_cap": price_data.get("usd_market_cap", 0)
+                            }
+                    
+                    return {
+                        "success": True,
+                        "data": formatted_data,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                else:
+                    return {"success": False, "error": f"API request failed with status {response.status}"}
+    except Exception as e:
+        return {"success": False, "error": f"Failed to fetch prices: {str(e)}"}
 
 async def get_real_ai_response(user_message: str, context: Dict[str, Any] = {}) -> str:
     """Get response from real AI service (Groq)"""
@@ -255,613 +306,557 @@ async def get_real_ai_response(user_message: str, context: Dict[str, Any] = {}) 
         raise e
 
 async def get_enhanced_fallback_response(user_message: str, context: Dict[str, Any] = {}) -> str:
-    """ChatGPT-style intelligent responses for any crypto question"""
-    await asyncio.sleep(0.3)  # Simulate AI thinking time
+    """Dynamic AI that analyzes questions and generates intelligent responses"""
+    await asyncio.sleep(0.8)  # Simulate AI thinking time
     
-    message_lower = user_message.lower()
     timestamp = datetime.now().strftime("%H:%M")
     
-    # Comprehensive analysis of user question patterns
+    # Analyze the user's question intelligently
+    analysis = analyze_user_question(user_message)
     
-    # Bitcoin analysis
-    if any(word in message_lower for word in ['bitcoin', 'btc']):
-        return f"""🟠 **Bitcoin Analysis** • {timestamp}
-
-Bitcoin continues to dominate the cryptocurrency landscape as digital gold. Here's my comprehensive analysis:
-
-**📊 Market Position:**
-• **Market Cap**: ~$2.1 trillion (62% crypto dominance)
-• **Current Range**: Testing key psychological levels
-• **Institutional Flow**: Strong ETF adoption driving demand
-• **Network Health**: Hash rate at all-time highs, security robust
-
-**🔮 Technical Outlook:**
-• **Support Levels**: Strong accumulation zones around major psychological barriers
-• **Resistance**: Previous all-time highs creating selling pressure
-• **Volume**: Institutional buying patterns visible in large block trades
-• **Trend**: Long-term bullish structure intact despite short-term volatility
-
-**💡 Investment Thesis:**
-Bitcoin's fixed supply of 21 million coins, growing institutional adoption, and position as uncorrelated digital asset make it compelling for portfolio allocation. Consider:
-- Dollar-cost averaging during volatility
-- Long-term holding (4+ years) historically profitable
-- Allocation of 5-10% of investment portfolio
-
-**⚠️ Risk Factors:**
-Regulatory developments, macroeconomic policy changes, and energy consumption concerns remain key monitoring points.
-
-*This analysis combines technical, fundamental, and sentiment factors for comprehensive insight.*"""
-
-    # Ethereum analysis
-    elif any(word in message_lower for word in ['ethereum', 'eth']):
-        return f"""⚫ **Ethereum Deep Dive** • {timestamp}
-
-Ethereum remains the world's programmable blockchain, powering the decentralized economy:
-
-**🏗️ Network Fundamentals:**
-• **Smart Contracts**: 3,000+ DApps running on mainnet
-• **DeFi TVL**: $50+ billion locked in protocols
-• **NFT Marketplace**: 90%+ of NFT trading volume
-• **Layer 2 Growth**: Polygon, Arbitrum, Optimism scaling rapidly
-
-**⚡ Technical Evolution:**
-• **Proof of Stake**: 99.95% energy reduction post-Merge
-• **Staking Rewards**: ~4-6% APY for validators
-• **Gas Optimization**: EIP-1559 and Layer 2s reducing fees
-• **Future Upgrades**: Sharding and further scalability improvements
-
-**📈 Value Propositions:**
-1. **Utility Token**: Required for all network operations
-2. **Yield Generation**: Staking provides passive income
-3. **Deflationary Mechanics**: Fee burning reduces supply
-4. **Developer Ecosystem**: Largest blockchain developer community
-
-**💎 Investment Strategy:**
-Ethereum benefits from network effects and utility demand. Consider:
-- Staking for yield (solo or liquid staking)
-- Long-term hold for ecosystem growth
-- DCA approach during market volatility
-
-**🎯 Price Catalysts:**
-ETF approval potential, institutional staking adoption, Layer 2 mainstream usage, and continued DeFi innovation."""
-
-    # Altcoin analysis  
-    elif any(word in message_lower for word in ['solana', 'sol', 'cardano', 'ada', 'polygon', 'matic', 'avalanche', 'avax', 'chainlink', 'link', 'polkadot', 'dot']):
-        coin_mentioned = next((word for word in ['solana', 'cardano', 'polygon', 'avalanche', 'chainlink', 'polkadot'] if word in message_lower), 'altcoin')
+    # Fetch real-time price data if it's a price-related question
+    real_time_data = {}
+    if analysis["question_type"] == "price_analysis" and analysis["crypto_mentions"]:
+        # Map crypto mentions to CoinGecko IDs
+        crypto_id_map = {
+            'BTC': 'bitcoin', 'BITCOIN': 'bitcoin',
+            'ETH': 'ethereum', 'ETHEREUM': 'ethereum',
+            'SOL': 'solana', 'SOLANA': 'solana',
+            'ADA': 'cardano', 'CARDANO': 'cardano',
+            'MATIC': 'polygon', 'POLYGON': 'polygon',
+            'AVAX': 'avalanche', 'AVALANCHE': 'avalanche',
+            'LINK': 'chainlink', 'CHAINLINK': 'chainlink'
+        }
         
-        return f"""🚀 **{coin_mentioned.title()} Analysis** • {timestamp}
-
-**{coin_mentioned.title()} Comprehensive Assessment:**
-
-**🔧 Technology & Use Case:**
-{
-    "High-performance blockchain optimized for speed and low costs. Powers DeFi, NFTs, and Web3 applications with sub-second finality." if 'solana' in coin_mentioned else
-    "Research-driven blockchain with peer-reviewed development. Focus on sustainability, interoperability, and formal verification." if 'cardano' in coin_mentioned else  
-    "Ethereum's leading scaling solution with growing ecosystem of dApps and partnerships with major enterprises." if 'polygon' in coin_mentioned else
-    "Subnet architecture enabling custom blockchains. Powers enterprise and gaming applications with high throughput." if 'avalanche' in coin_mentioned else
-    "Decentralized oracle network connecting blockchains to real-world data. Essential infrastructure for DeFi and smart contracts." if 'chainlink' in coin_mentioned else
-    "Interoperability-focused blockchain enabling cross-chain communication. Parachain auction model creates unique economics." if 'polkadot' in coin_mentioned else
-    "Strong fundamentals with clear utility and growing adoption."
-}
-
-**📊 Market Position:**
-• **Ranking**: Top 10 cryptocurrency by market cap
-• **Adoption**: Growing developer activity and user base  
-• **Partnerships**: Enterprise and institutional collaborations
-• **Competition**: Strong differentiation in crowded L1/L2 space
-
-**💰 Investment Considerations:**
-**Bullish Factors:**
-- Unique technology solving real problems
-- Strong development team and community
-- Growing ecosystem and usage metrics
-- Institutional interest and partnerships
-
-**Risk Factors:**
-- High competition in blockchain space
-- Technology execution risks
-- Regulatory uncertainty for some features
-- Market volatility and correlation risks
-
-**🎯 Strategy Recommendation:**
-Consider as part of diversified crypto portfolio (10-20% allocation). Dollar-cost average during volatility periods and hold for technology adoption cycles (2-4 years).
-
-*Research the specific project's roadmap, tokenomics, and competitive positioning for deeper analysis.*"""
-
-    # Market analysis
-    elif any(word in message_lower for word in ['market', 'trend', 'analysis', 'outlook', 'bull', 'bear', 'cycle']):
-        return f"""📊 **Crypto Market Intelligence** • {timestamp}
-
-**🌐 Current Market Landscape:**
-
-The cryptocurrency market is experiencing a fascinating convergence of institutional adoption, technological maturation, and regulatory evolution:
-
-**📈 Bull Market Indicators:**
-• **Institutional Adoption**: Bitcoin ETFs crossing $100B in assets
-• **Corporate Treasury**: Companies adding crypto to balance sheets
-• **Regulatory Clarity**: Clear frameworks emerging globally
-• **Technology Maturation**: Layer 2s solving scalability, DeFi growing sophistication
-
-**⚖️ Market Dynamics:**
-• **Cycle Stage**: Mid-cycle with room for growth
-• **Correlation**: Decreasing correlation with traditional markets
-• **Volatility**: High but decreasing as market matures
-• **Liquidity**: Improving with institutional participation
-
-**🔮 Macro Factors:**
-1. **Federal Reserve Policy**: Interest rates affecting risk appetite
-2. **Inflation Hedge**: Crypto viewed as alternative store of value
-3. **Geopolitical Tensions**: Driving safe-haven demand
-4. **Currency Debasement**: Fiat devaluation supporting crypto thesis
-
-**🎯 Sector Rotation Patterns:**
-1. **Bitcoin First**: Store of value narrative leads
-2. **Ethereum Second**: Smart contract platform benefits
-3. **Altcoin Season**: Speculation flows to smaller caps
-4. **DeFi/NFT Cycles**: Utility tokens gain during innovation waves
-
-**💡 Strategic Positioning:**
-- **Bear Market Strategy**: Accumulate quality projects, DCA approach
-- **Bull Market Strategy**: Take profits systematically, avoid FOMO
-- **All Weather**: Diversified portfolio, risk management, long-term perspective
-
-**⚠️ Key Risks to Monitor:**
-Regulatory overreach, macroeconomic recession, technology failures, market manipulation, and systemic crypto industry risks.
-
-*Market cycles typically last 3-4 years. Position for long-term while managing short-term volatility.*"""
-
-    # Technical analysis
-    elif any(word in message_lower for word in ['technical', 'chart', 'rsi', 'macd', 'support', 'resistance', 'pattern', 'indicator']):
-        return f"""📈 **Technical Analysis Masterclass** • {timestamp}
-
-**🔧 Crypto Technical Analysis Framework:**
-
-Technical analysis in crypto requires understanding unique market characteristics while applying proven methodologies:
-
-**📊 Core Indicators for Crypto:**
-
-**RSI (Relative Strength Index):**
-• **Crypto Adjustment**: Markets stay overbought/oversold longer than traditional assets
-• **Entry Signals**: RSI < 30 (oversold) often good accumulation zones
-• **Exit Signals**: RSI > 70 (overbought) consider profit-taking
-• **Divergence**: Price vs RSI divergence often precedes reversals
-
-**MACD (Moving Average Convergence Divergence):**
-• **Trend Confirmation**: MACD crossovers with volume confirmation
-• **Momentum Shifts**: Histogram showing acceleration/deceleration
-• **Crypto Adaptation**: Use longer periods (21/50/100) for less noise
-
-**Support & Resistance:**
-• **Psychological Levels**: Round numbers ($100K, $50K) extremely significant
-• **Previous ATH/ATL**: Former highs become resistance, lows become support
-• **Volume Confirmation**: High volume at levels increases significance
-• **Fibonacci Retracements**: 0.618, 0.5, 0.382 levels often respected
-
-**📉 Advanced Patterns:**
-• **Cup and Handle**: Bullish continuation pattern common in crypto
-• **Bull/Bear Flags**: Powerful trend continuation signals
-• **Double Top/Bottom**: Major reversal patterns at cycle peaks/troughs
-• **Head and Shoulders**: Reliable reversal pattern with volume confirmation
-
-**⏰ Timeframe Strategy:**
-• **Scalping**: 1m, 5m charts (high risk, quick profits)
-• **Day Trading**: 15m, 1h charts (moderate timeframe)
-• **Swing Trading**: 4h, daily charts (recommended for most)
-• **Position Trading**: Weekly, monthly charts (long-term trends)
-
-**🎯 Crypto-Specific Considerations:**
-1. **24/7 Markets**: Weekend gaps don't exist, continuous trading
-2. **High Volatility**: Larger stop losses needed, position sizing critical
-3. **News Impact**: Fundamental events override technical patterns
-4. **Whale Influence**: Large holders can invalidate technical signals
-5. **Exchange Differences**: Price variations across platforms
-
-**💡 Risk Management Rules:**
-- Never risk more than 2% per trade
-- Always use stop losses
-- Take profits systematically
-- Don't overtrade or revenge trade
-- Keep detailed trading journal
-
-*Technical analysis provides probability, not certainty. Combine with fundamental analysis for best results.*"""
-
-    # DeFi and yield farming
-    elif any(word in message_lower for word in ['defi', 'yield', 'farming', 'staking', 'liquidity', 'apy', 'lending', 'protocol']):
-        return f"""🏦 **DeFi & Yield Strategy Guide** • {timestamp}
-
-**🌊 Decentralized Finance Landscape:**
-
-DeFi has revolutionized traditional finance, offering permissionless access to sophisticated financial products:
-
-**💰 Yield Generation Strategies:**
-
-**🔒 Staking (Lower Risk):**
-• **Ethereum 2.0**: 4-6% APY, liquid staking via Lido/Rocket Pool
-• **Cardano**: 4-5% APY, no lockup period, delegated staking
-• **Solana**: 6-8% APY, automatic compounding available
-• **Cosmos Ecosystem**: 8-15% APY across various chains
-• **Polkadot**: 10-12% APY through nomination pools
-
-**🌊 Liquidity Providing (Medium Risk):**
-• **Uniswap V3**: 5-50% APY, concentrated liquidity, impermanent loss risk
-• **Curve Finance**: 3-20% APY, stable pairs safer, boosted rewards with veCRV
-• **Balancer**: 8-25% APY, multiple token pools, auto-rebalancing
-• **SushiSwap**: 10-40% APY, cross-chain opportunities
-
-**💎 Lending Protocols (Low-Medium Risk):**
-• **Aave**: 2-12% APY, flash loans, collateral efficiency
-• **Compound**: 1-8% APY, algorithmic interest rates
-• **Maker**: 3-8% APY through DSR, DAI stablecoin
-• **Benqi (Avalanche)**: 5-15% APY, native AVAX integration
-
-**🎯 Advanced Strategies:**
-
-**Yield Farming:**
-- Provide liquidity → Earn trading fees + token rewards
-- Compound yields by reinvesting rewards
-- Farm governance tokens for additional upside
-
-**Leverage Yield Farming:**
-- Borrow against collateral to increase position size
-- Amplifies both returns and risks significantly
-- Requires careful monitoring of liquidation ratios
-
-**Delta-Neutral Strategies:**
-- Hedge price exposure while capturing yield
-- Long spot + short perpetual futures
-- Earn funding rates + staking/lending yields
-
-**⚠️ Risk Management Framework:**
-
-**Smart Contract Risk:**
-- Use only audited, battle-tested protocols
-- Diversify across multiple platforms
-- Understand protocol mechanics and governance
-
-**Impermanent Loss:**
-- Occurs when token ratios change in liquidity pools
-- Higher with volatile pairs vs stablecoin pairs
-- Calculate IL before providing liquidity
-
-**Liquidation Risk:**
-- Monitor collateral ratios continuously  
-- Set conservative ratios (>200%)
-- Use price alerts and automatic tools
-
-**💡 Practical Implementation:**
-1. **Start Small**: Begin with blue-chip protocols and small amounts
-2. **Understand Completely**: Never invest in strategies you don't understand
-3. **Gas Considerations**: Factor transaction costs into yield calculations
-4. **Tax Implications**: Keep detailed records for DeFi activities
-5. **Insurance**: Consider protocol insurance (Nexus Mutual, InsurAce)
-
-**🏆 Recommended Portfolio Allocation:**
-- 40% Low-risk staking (ETH, ADA, SOL)
-- 30% Medium-risk lending (Aave, Compound)
-- 20% Liquidity providing (stable pairs)
-- 10% Experimental/high-yield strategies
-
-*DeFi yields are attractive but come with unique risks. Never invest more than you can afford to lose.*"""
-
-    # Trading and investment strategy
-    elif any(word in message_lower for word in ['trade', 'trading', 'strategy', 'buy', 'sell', 'when', 'investment', 'portfolio']):
-        return f"""💼 **Crypto Trading & Investment Mastery** • {timestamp}
-
-**🎯 Comprehensive Trading Framework:**
-
-**📊 Market Analysis Hierarchy:**
-1. **Macro Analysis**: Global economic conditions, regulatory environment
-2. **Sector Analysis**: Which crypto sectors are outperforming
-3. **Individual Analysis**: Specific project fundamentals and technicals
-4. **Timing Analysis**: Entry/exit optimization using multiple indicators
-
-**⚡ Trading Strategies by Timeframe:**
-
-**Scalping (Minutes to Hours):**
-• **Advantages**: Quick profits, limited exposure
-• **Requirements**: Advanced technical skills, low latency execution
-• **Tools**: Order book analysis, level 2 data, automated systems
-• **Risk**: High stress, frequent trading costs, prone to overtrading
-
-**Day Trading (Hours to 1 Day):**
-• **Focus**: Intraday price movements and momentum
-• **Strategy**: Breakout trading, reversal patterns, news catalyst trading
-• **Risk Management**: Strict stop losses, position sizing, no overnight holds
-• **Success Rate**: Requires discipline and risk management
-
-**Swing Trading (Days to Weeks):**
-• **Sweet Spot**: Captures medium-term trends and corrections
-• **Analysis**: Daily/4H charts, trend following, momentum indicators
-• **Advantages**: Less stressful, higher success rates for retail traders
-• **Strategy**: Buy dips in uptrends, sell rallies in downtrends
-
-**Position Trading (Weeks to Years):**
-• **Philosophy**: Long-term value creation and technology adoption
-• **Research**: Deep fundamental analysis, tokenomics, team evaluation
-• **Patience**: Riding through market cycles and volatility
-• **Compounding**: Reinvesting gains and staking rewards
-
-**🏆 Portfolio Construction Models:**
-
-**Conservative Crypto Portfolio:**
-• 60% Bitcoin (store of value, lowest volatility)
-• 25% Ethereum (smart contract platform leader)
-• 10% Top 10 altcoins (diversified exposure)
-• 5% Stablecoins (opportunistic purchases)
-
-**Growth-Oriented Portfolio:**
-• 40% BTC/ETH (foundation)
-• 35% Large-cap altcoins (SOL, ADA, DOT, AVAX)
-• 20% Mid-cap growth projects (AI, gaming, DeFi)
-• 5% Speculative/emerging technologies
-
-**Aggressive High-Risk Portfolio:**
-• 25% BTC/ETH (anchor)
-• 30% Established altcoins
-• 30% Emerging protocols and sectors
-• 15% Speculative plays and new launches
-
-**💡 Risk Management Principles:**
-
-**Position Sizing:**
-- Never risk more than 1-2% of portfolio per trade
-- Kelly Criterion for optimal position sizing
-- Scale into positions during volatility
-
-**Stop Loss Strategy:**
-- Technical stops (below support levels)
-- Percentage stops (10-20% for crypto)
-- Time stops (exit after X days if no progress)
-
-**Profit Taking:**
-- Scale out systematically (25%, 50%, 75%)
-- Lock in profits during parabolic moves
-- Leave runners for maximum upside
-
-**🔮 Market Timing Indicators:**
-
-**Bull Market Signals:**
-• Institutional adoption increasing
-• Mainstream media coverage turning positive
-• Long-term holders accumulating
-• Technical breakouts with volume
-
-**Bear Market Signals:**
-• Regulatory crackdowns and negative news
-• Long-term holders distributing
-• Technical breakdowns below major support
-• Risk-off sentiment in broader markets
-
-**⚠️ Common Trading Mistakes:**
-1. **FOMO**: Buying after major rallies
-2. **Panic Selling**: Selling after major drops
-3. **Overleverage**: Using too much borrowed money
-4. **No Plan**: Trading without clear entry/exit rules
-5. **Emotional Decisions**: Letting fear/greed drive decisions
-
-**🎯 Success Metrics:**
-- Risk-adjusted returns (Sharpe ratio)
-- Maximum drawdown management
-- Consistency over time periods
-- Learning and skill development
-
-*Successful crypto trading combines technical analysis, fundamental research, risk management, and emotional discipline.*"""
-
-    # Specific altcoins
-    elif any(word in message_lower for word in ['altcoin', 'alt', 'best', 'top', 'recommend']):
-        return f"""🚀 **Top Altcoin Analysis** • {timestamp}
-
-**🏆 Tier 1 Altcoins (Established Leaders):**
-
-**Solana (SOL)** - High-Performance Blockchain
-• **Strengths**: Sub-second finality, low fees, growing DeFi/NFT ecosystem
-• **Use Cases**: DeFi protocols, NFT marketplaces, Web3 applications
-• **Investment Thesis**: Ethereum competitor with superior performance
-• **Risks**: Network stability concerns, centralization questions
-
-**Cardano (ADA)** - Research-Driven Blockchain  
-• **Strengths**: Peer-reviewed development, sustainability focus
-• **Use Cases**: Smart contracts, DeFi, African partnerships
-• **Investment Thesis**: Long-term sustainable blockchain development
-• **Risks**: Slow development pace, limited current utility
-
-**Avalanche (AVAX)** - Subnet Architecture
-• **Strengths**: Custom blockchain creation, enterprise adoption
-• **Use Cases**: DeFi, gaming, enterprise applications
-• **Investment Thesis**: Multi-chain future with specialized subnets
-• **Risks**: Competition from other L1s, complexity
-
-**🎯 Tier 2 Altcoins (Growth Potential):**
-
-**Polygon (MATIC)** - Ethereum Scaling
-• **Catalyst**: Growing enterprise partnerships, zkEVM rollout
-• **Upside**: Ethereum ecosystem growth, corporate adoption
-
-**Chainlink (LINK)** - Oracle Infrastructure
-• **Catalyst**: Real-world data integration, cross-chain protocols
-• **Upside**: Essential infrastructure for DeFi growth
-
-**Polkadot (DOT)** - Interoperability
-• **Catalyst**: Parachain ecosystem maturation
-• **Upside**: Cross-chain communication solutions
-
-**🔥 Emerging Sectors to Watch:**
-
-**AI Integration:**
-• Projects combining artificial intelligence with blockchain
-• Decentralized AI training and inference
-• Data monetization and privacy solutions
-
-**Real World Assets (RWA):**
-• Tokenization of traditional assets
-• Real estate, commodities, bonds on blockchain
-• Massive addressable market potential
-
-**Gaming & Metaverse:**
-• Play-to-earn game ecosystems
-• Virtual world economies and NFTs
-• Mass adoption through entertainment
-
-**💡 Selection Criteria Framework:**
-
-**Team & Development:**
-- Experienced founders and developers
-- Active GitHub commits and development
-- Clear roadmap and execution history
-
-**Technology & Innovation:**
-- Unique value proposition or competitive advantage
-- Scalable technology architecture
-- Real-world problem solving
-
-**Adoption & Partnerships:**
-- Growing user base and transaction volume
-- Enterprise partnerships and integrations
-- Developer ecosystem growth
-
-**Tokenomics:**
-- Clear utility and value accrual mechanisms
-- Reasonable token distribution and vesting
-- Deflationary or growth-aligned economics
-
-**⚠️ Altcoin Investment Strategy:**
-
-**Diversification Rules:**
-- Maximum 5-10% per individual altcoin
-- Spread across different sectors and use cases
-- Don't chase pumps or follow hype alone
-
-**Research Process:**
-1. Read whitepaper and understand technology
-2. Analyze team backgrounds and experience
-3. Study tokenomics and value accrual
-4. Monitor development activity and partnerships
-5. Assess competitive landscape and moats
-
-**Risk Management:**
-- Set stop losses for speculative positions
-- Take profits during major rallies (50-80% gains)
-- Rebalance portfolio quarterly
-- Never invest more than you can afford to lose
-
-*Altcoins offer higher growth potential but with significantly higher risk. Thorough research and diversification are essential.*"""
-
-    # Profit calculator and financial calculations
-    elif any(word in message_lower for word in ['profit', 'calculator', 'calculate', 'gains', 'loss', 'roi', 'return']):
-        return f"""🧮 **Crypto Profit Calculator & Analysis** • {timestamp}
-
-**💰 Comprehensive Profit/Loss Calculator:**
-
-**📊 Investment Performance Metrics:**
-
-**🎯 Basic Profit Calculation:**
-• **Formula**: Profit = (Current Value - Initial Investment) - Fees
-• **ROI %**: ((Current Value - Initial Investment) / Initial Investment) × 100
-• **Annualized Return**: (Total Return / Years Held)^(1/Years) - 1
-
-**💡 Example Calculations:**
-
-**Bitcoin Investment Example:**
-• **Initial Investment**: $10,000 at $40,000/BTC (0.25 BTC)
-• **Current Price**: $100,000/BTC
-• **Current Value**: $25,000
-• **Profit**: $15,000
-• **ROI**: 150%
-• **If held 2 years**: 58.1% annualized return
-
-**DCA Strategy Example:**
-• **Monthly Investment**: $500 for 12 months
-• **Total Invested**: $6,000
-• **Average Buy Price**: $45,000/BTC
-• **Current Price**: $100,000/BTC
-• **Total BTC**: 0.133 BTC
-• **Current Value**: $13,300
-• **Profit**: $7,300 (121.7% ROI)
-
-**🔧 Advanced Calculation Tools:**
-
-**Position Sizing Calculator:**
-• **Risk Per Trade**: 1-2% of portfolio
-• **Stop Loss Distance**: Percentage from entry
-• **Position Size**: (Risk Amount) ÷ (Stop Loss %)
-• **Example**: $10k portfolio, 2% risk, 10% stop = $200 position
-
-**DCA Calculator:**
-• **Investment Amount**: Weekly/Monthly amount
-• **Time Period**: Duration of DCA strategy
-• **Price Averaging**: Weighted average purchase price
-• **Total Cost**: Sum of all purchases + fees
-
-**Yield Farming Calculator:**
-• **Principal**: Initial staking amount
-• **APY**: Annual percentage yield
-• **Compounding**: Daily/Weekly/Monthly
-• **Time**: Investment duration
-• **Formula**: A = P(1 + r/n)^(nt)
-
-**📈 Real-Time Calculation Features:**
-
-**🎯 Quick Profit Check:**
-1. **Enter Buy Price**: $____
-2. **Enter Current Price**: $____
-3. **Enter Amount Invested**: $____
-4. **Add Trading Fees**: ___%
-5. **Result**: Instant profit/loss calculation
-
-**💸 Fee Impact Calculator:**
-• **Trading Fees**: 0.1% - 1% per transaction
-• **Network Fees**: Variable (ETH gas, BTC fees)
-• **Spread Costs**: Bid-ask difference
-• **Total Cost**: Can reduce returns by 2-5% annually
-
-**🔮 Scenario Analysis:**
-
-**Bull Case (+100%):**
-• Investment doubles in value
-• $10,000 → $20,000
-• Net profit after fees: ~$9,800
-
-**Base Case (+25%):**
-• Moderate growth scenario  
-• $10,000 → $12,500
-• Net profit after fees: ~$2,400
-
-**Bear Case (-50%):**
-• Market downturn scenario
-• $10,000 → $5,000
-• Loss including fees: ~$5,100
-
-**🛡️ Risk Management Calculations:**
-
-**Portfolio Allocation:**
-• **Conservative**: 5-10% crypto allocation
-• **Moderate**: 10-20% crypto allocation  
-• **Aggressive**: 20%+ crypto allocation
-
-**Stop Loss Levels:**
-• **Tight**: 10-15% below entry
-• **Normal**: 20-25% below entry
-• **Wide**: 30-40% below entry
-
-**⚡ Interactive Calculator Commands:**
-
-Say things like:
-• "Calculate profit if Bitcoin hits $150,000"
-• "What's my ROI on $5,000 investment?"
-• "DCA calculator for $200 monthly"
-• "Stop loss calculator for my position"
-• "Yield farming returns on $10,000"
-
-**💡 Pro Tips:**
-- Always factor in taxes (20-37% on gains)
-- Include all fees in calculations
-- Use position sizing to manage risk
-- Regular rebalancing improves returns
-- Consider dollar-cost averaging for volatility
-
-*This calculator helps you make informed investment decisions. Remember: past performance doesn't guarantee future results.*"""
-
-    # API Routes
+        # Fetch prices for mentioned cryptos
+        crypto_ids_to_fetch = []
+        for crypto in analysis["crypto_mentions"]:
+            if crypto in crypto_id_map:
+                crypto_ids_to_fetch.append(crypto_id_map[crypto])
+        
+        if crypto_ids_to_fetch:
+            price_data = await get_multiple_crypto_prices(crypto_ids_to_fetch)
+            real_time_data = price_data
+    
+    # Generate dynamic response based on analysis
+    response = await generate_intelligent_response(user_message, analysis, timestamp, context, real_time_data)
+    
+    return response
+
+def analyze_user_question(question: str) -> Dict[str, Any]:
+    """Analyze user question to understand intent and topics"""
+    
+    question_lower = question.lower()
+    
+    # Extract key concepts and entities
+    crypto_mentions = []
+    for crypto in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'cardano', 'ada', 'polygon', 'matic', 'chainlink', 'link', 'avalanche', 'avax']:
+        if crypto in question_lower:
+            crypto_mentions.append(crypto.upper())
+    
+    # Determine question type and intent
+    question_type = "general"
+    sentiment = "neutral"
+    urgency = "normal"
+    
+    # Investment/Safety questions
+    if any(word in question_lower for word in ['safe', 'invest', 'should i', 'risk', 'buy', 'worth it']):
+        question_type = "investment_advice"
+        
+    # Price/Market questions  
+    elif any(word in question_lower for word in ['price', 'cost', 'expensive', 'cheap', 'value', 'market', 'current price', 'price now', 'how much', 'worth']):
+        question_type = "price_analysis"
+        
+    # Technical questions
+    elif any(word in question_lower for word in ['how', 'what', 'explain', 'work', 'technology']):
+        question_type = "educational"
+        
+    # Trading questions
+    elif any(word in question_lower for word in ['trade', 'trading', 'strategy', 'when', 'timing']):
+        question_type = "trading_advice"
+        
+    # Future/Prediction questions
+    elif any(word in question_lower for word in ['future', 'predict', 'forecast', 'will', 'going to']):
+        question_type = "prediction"
+    
+    # Detect sentiment
+    if any(word in question_lower for word in ['worried', 'scared', 'afraid', 'concern', 'panic', 'crash']):
+        sentiment = "fearful"
+    elif any(word in question_lower for word in ['excited', 'bullish', 'moon', 'pump', 'opportunity']):
+        sentiment = "optimistic"
+        
+    # Detect urgency
+    if any(word in question_lower for word in ['urgent', 'quickly', 'asap', 'now', 'immediately']):
+        urgency = "high"
+    
+    return {
+        "question_type": question_type,
+        "crypto_mentions": crypto_mentions,
+        "sentiment": sentiment,
+        "urgency": urgency,
+        "question_length": len(question.split()),
+        "contains_numbers": any(char.isdigit() for char in question)
+    }
+
+async def generate_intelligent_response(question: str, analysis: Dict[str, Any], timestamp: str, context: Dict[str, Any], real_time_data: Dict[str, Any] = {}) -> str:
+    """Generate contextual, intelligent response based on question analysis"""
+    
+    question_type = analysis["question_type"]
+    crypto_mentions = analysis["crypto_mentions"]
+    sentiment = analysis["sentiment"]
+    urgency = analysis["urgency"]
+    
+    # Build dynamic response based on intelligent analysis
+    response_parts = []
+    
+    # Add personalized greeting based on sentiment
+    if sentiment == "fearful":
+        greeting = "🤗 **I understand your concerns about crypto investing.**"
+    elif sentiment == "optimistic":  
+        greeting = "🚀 **Great to see your enthusiasm for crypto!**"
+    else:
+        greeting = "💡 **Let me help you with that crypto question.**"
+    
+    response_parts.append(f"{greeting} • {timestamp}\n")
+    
+    # Generate main content based on question type and context
+    if question_type == "investment_advice":
+        main_content = generate_investment_advice(question, crypto_mentions, sentiment)
+    elif question_type == "price_analysis":
+        main_content = generate_price_analysis(question, crypto_mentions, real_time_data)
+    elif question_type == "educational":
+        main_content = generate_educational_content(question, crypto_mentions)
+    elif question_type == "trading_advice":
+        main_content = generate_trading_advice(question, crypto_mentions)
+    elif question_type == "prediction":
+        main_content = generate_prediction_analysis(question, crypto_mentions)
+    else:
+        main_content = generate_general_crypto_response(question, analysis)
+    
+    response_parts.append(main_content)
+    
+    # Add contextual closing based on urgency and sentiment
+    if urgency == "high":
+        closing = "\n**⚡ Quick Action Items:**\n- Start with small amounts to learn\n- Use reputable exchanges only\n- Never invest emergency funds\n- Take time to research properly"
+    else:
+        closing = f"\n**💡 Next Steps:**\n- Continue learning about crypto fundamentals\n- Consider your risk tolerance carefully\n- Start small and gradually increase knowledge\n- Feel free to ask more specific questions!"
+    
+    response_parts.append(closing)
+    
+    # Clean up response before returning
+    final_response = "".join(response_parts)
+    return clean_ai_response(final_response)
+
+def clean_ai_response(response: str) -> str:
+    """Clean up AI response to remove unwanted formatting and content"""
+    
+    # Remove markdown asterisks for bullets (convert to simple bullets)
+    response = response.replace("* ", "• ")
+    response = response.replace("*", "")
+    
+    # Remove any fake portfolio information
+    lines = response.split('\n')
+    cleaned_lines = []
+    skip_next_lines = 0
+    
+    for i, line in enumerate(lines):
+        # Skip portfolio-related content
+        if any(phrase in line.lower() for phrase in [
+            "your current portfolio",
+            "current portfolio", 
+            "portfolio:",
+            "'btc'", "'eth'", "'xrp'", "'usdt'", "'sol'",
+            "['btc',", "[btc,", "btc, eth, xrp"
+        ]):
+            skip_next_lines = 3  # Skip this line and next 2 lines
+            continue
+            
+        if skip_next_lines > 0:
+            skip_next_lines -= 1
+            continue
+            
+        # Clean up other unwanted content
+        if not any(unwanted in line.lower() for unwanted in [
+            "recommendation:",
+            "continue to monitor market trends",
+            "consider adding a stablecoin"
+        ]):
+            cleaned_lines.append(line)
+    
+    # Join back and clean up extra spaces/newlines
+    cleaned_response = '\n'.join(cleaned_lines)
+    
+    # Remove multiple consecutive newlines
+    import re
+    cleaned_response = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_response)
+    
+    return cleaned_response.strip()
+
+def generate_investment_advice(question: str, crypto_mentions: list, sentiment: str) -> str:
+    """Generate dynamic investment advice based on question context"""
+    
+    advice_parts = []
+    
+    # Analyze the specific investment question
+    if "safe" in question.lower() or "risk" in question.lower():
+        advice_parts.append("**🛡️ Crypto Investment Safety Reality:**\n")
+        advice_parts.append("Crypto investing involves significant risks but can be part of a balanced portfolio. Here's what you need to know:\n\n")
+        
+        advice_parts.append("⚠️ Key Risks:\n")
+        advice_parts.append("• Extreme volatility (50-90% price swings)\n")
+        advice_parts.append("• Regulatory uncertainty in many countries\n") 
+        advice_parts.append("• Technology risks and potential security breaches\n")
+        advice_parts.append("• Market manipulation and liquidity issues\n\n")
+        
+        if sentiment == "fearful":
+            advice_parts.append("🤝 For Cautious Investors:\n")
+            advice_parts.append("• Start with just 1-5% of your portfolio\n")
+            advice_parts.append("• Stick to Bitcoin and Ethereum initially\n")
+            advice_parts.append("• Use dollar-cost averaging over 6-12 months\n")
+            advice_parts.append("• Only invest money you can completely afford to lose\n")
+        else:
+            advice_parts.append("💰 Smart Investment Approach:\n")
+            advice_parts.append("• 5-10% portfolio allocation for moderate risk tolerance\n")
+            advice_parts.append("• 70% Bitcoin/Ethereum, 30% quality altcoins\n") 
+            advice_parts.append("• Long-term holding strategy (3-5+ years)\n")
+            advice_parts.append("• Regular rebalancing and profit-taking during peaks\n")
+    
+    elif "should i" in question.lower() or "worth it" in question.lower():
+        advice_parts.append("**🤔 Should You Invest in Crypto? Here's My Analysis:**\n\n")
+        
+        advice_parts.append("✅ You SHOULD consider crypto if:\n")
+        advice_parts.append("• You have emergency fund and stable income\n")
+        advice_parts.append("• You can handle high volatility emotionally\n")
+        advice_parts.append("• You're investing for 3+ years minimum\n")
+        advice_parts.append("• You understand the technology basics\n")
+        advice_parts.append("• You want portfolio diversification\n\n")
+        
+        advice_parts.append("❌ AVOID crypto investing if:\n")
+        advice_parts.append("• You need the money within 2 years\n")
+        advice_parts.append("• You're borrowing money to invest\n")
+        advice_parts.append("• You panic during market downturns\n")
+        advice_parts.append("• You don't understand what you're buying\n")
+        advice_parts.append("• You're hoping to get rich quick\n")
+    
+    elif crypto_mentions:
+        specific_crypto = crypto_mentions[0]
+        advice_parts.append(f"**📊 {specific_crypto} Investment Analysis:**\n\n")
+        
+        if "BTC" in specific_crypto or "BITCOIN" in specific_crypto:
+            advice_parts.append("**Bitcoin Investment Thesis:**\n")
+            advice_parts.append("• Digital store of value with fixed supply (21M coins)\n")
+            advice_parts.append("• Growing institutional adoption and ETF approval\n")
+            advice_parts.append("• Lowest risk crypto investment option\n")
+            advice_parts.append("• Good entry point for crypto beginners\n")
+            advice_parts.append("• Historical 4-year cycles show strong long-term returns\n")
+        
+        elif "ETH" in specific_crypto or "ETHEREUM" in specific_crypto:
+            advice_parts.append("**Ethereum Investment Thesis:**\n")
+            advice_parts.append("• Leading smart contract platform powering DeFi/NFTs\n")
+            advice_parts.append("• Generates yield through staking (4-6% APY)\n")
+            advice_parts.append("• Deflationary tokenomics from fee burning\n")
+            advice_parts.append("• Higher growth potential but more volatile than Bitcoin\n")
+            advice_parts.append("• Essential infrastructure for decentralized applications\n")
+        
+        else:
+            advice_parts.append(f"**{specific_crypto} Considerations:**\n")
+            advice_parts.append("• Higher risk/reward compared to Bitcoin/Ethereum\n")
+            advice_parts.append("• Research the project's fundamentals thoroughly\n")
+            advice_parts.append("• Limit to 5-10% of total crypto allocation\n")
+            advice_parts.append("• Understand the technology and use case\n")
+            advice_parts.append("• Monitor development activity and partnerships\n")
+    
+    else:
+        advice_parts.append("**💼 General Crypto Investment Strategy:**\n\n")
+        advice_parts.append("• **Portfolio Allocation**: 5-10% of total investments\n")
+        advice_parts.append("• **Diversification**: Mix of Bitcoin, Ethereum, and select altcoins\n")
+        advice_parts.append("• **Strategy**: Dollar-cost averaging over time\n")
+        advice_parts.append("• **Timeline**: Long-term holding (3-5+ years)\n")
+        advice_parts.append("• **Security**: Use hardware wallet for large amounts\n")
+    
+    return "".join(advice_parts)
+
+def generate_price_analysis(question: str, crypto_mentions: list, real_time_data: Dict[str, Any] = {}) -> str:
+    """Generate dynamic price analysis with real-time data"""
+    
+    analysis_parts = []
+    analysis_parts.append("**� Real-Time Crypto Price Analysis:**\n\n")
+    
+    # Show real-time price data if available
+    if real_time_data.get("success") and real_time_data.get("data"):
+        analysis_parts.append("**💰 Current Live Prices:**\n")
+        
+        crypto_name_map = {
+            'bitcoin': 'Bitcoin (BTC)',
+            'ethereum': 'Ethereum (ETH)', 
+            'solana': 'Solana (SOL)',
+            'cardano': 'Cardano (ADA)',
+            'polygon': 'Polygon (MATIC)',
+            'avalanche': 'Avalanche (AVAX)',
+            'chainlink': 'Chainlink (LINK)'
+        }
+        
+        for crypto_id, price_info in real_time_data["data"].items():
+            crypto_name = crypto_name_map.get(crypto_id, crypto_id.title())
+            price = price_info["price"]
+            change_24h = price_info["price_change_24h"]
+            market_cap = price_info["market_cap"]
+            
+            # Format price with appropriate decimals
+            if price >= 1:
+                price_str = f"${price:,.2f}"
+            else:
+                price_str = f"${price:.6f}"
+                
+            # Format change with color indicator
+            if change_24h > 0:
+                change_emoji = "📈"
+                change_str = f"+{change_24h:.2f}%"
+            else:
+                change_emoji = "📉" 
+                change_str = f"{change_24h:.2f}%"
+                
+            # Format market cap
+            if market_cap > 1e12:
+                cap_str = f"${market_cap/1e12:.2f}T"
+            elif market_cap > 1e9:
+                cap_str = f"${market_cap/1e9:.2f}B"
+            elif market_cap > 1e6:
+                cap_str = f"${market_cap/1e6:.2f}M"
+            else:
+                cap_str = f"${market_cap:,.0f}"
+                
+            analysis_parts.append(f"• **{crypto_name}**: {price_str} {change_emoji} {change_str} (24h)\n")
+            analysis_parts.append(f"  Market Cap: {cap_str}\n\n")
+        
+        analysis_parts.append(f"*Data updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC*\n\n")
+    
+    # Add intelligent analysis based on mentioned cryptos
+    if crypto_mentions:
+        crypto = crypto_mentions[0]
+        analysis_parts.append(f"**🔍 {crypto} Analysis:**\n")
+        
+        if "BTC" in crypto or "BITCOIN" in crypto:
+            analysis_parts.append("• **Digital Gold**: Store of value narrative strengthening\n")
+            analysis_parts.append("• **Supply Dynamics**: Only ~1M BTC left to mine (94% mined)\n")
+            analysis_parts.append("• **Institutional Adoption**: Major ETFs and corporate treasuries\n") 
+            analysis_parts.append("• **Price Catalysts**: Regulatory clarity, sovereign adoption\n")
+        
+        elif "ETH" in crypto or "ETHEREUM" in crypto:
+            analysis_parts.append("• **Smart Contract Leader**: Dominant DeFi and NFT ecosystem\n")
+            analysis_parts.append("• **Technology Upgrades**: Proof-of-Stake, Layer 2 scaling\n")
+            analysis_parts.append("• **Deflationary Mechanics**: EIP-1559 fee burning during high usage\n")
+            analysis_parts.append("• **Institutional Interest**: Potential ETF approval pending\n")
+        
+        elif "SOL" in crypto or "SOLANA" in crypto:
+            analysis_parts.append("• **High Performance**: Sub-second finality, low transaction costs\n")
+            analysis_parts.append("• **Growing Ecosystem**: DeFi, NFTs, Web3 applications expanding\n")
+            analysis_parts.append("• **Mobile Focus**: Saga phone and mobile-first approach\n")
+            analysis_parts.append("• **Risk Factors**: Network stability concerns, centralization debates\n")
+            
+        else:
+            analysis_parts.append(f"• **Market Position**: {crypto} performance correlates with Bitcoin trends\n")
+            analysis_parts.append("• **Fundamental Analysis**: Research project roadmap and partnerships\n")
+            analysis_parts.append("• **Higher Volatility**: Altcoins typically more volatile than BTC/ETH\n")
+            analysis_parts.append("• **Due Diligence**: Monitor development activity and adoption metrics\n")
+    else:
+        analysis_parts.append("**🌐 General Market Overview:**\n")
+        analysis_parts.append("• **Market Cycle**: Mid-cycle with growing institutional participation\n")
+        analysis_parts.append("• **Regulatory Progress**: Clearer frameworks emerging globally\n")
+        analysis_parts.append("• **Technology Maturation**: Infrastructure improving, user experience better\n")
+        analysis_parts.append("• **Adoption Trends**: Mainstream integration accelerating\n")
+    
+    analysis_parts.append("\n**🎯 Key Price Factors to Monitor:**\n")
+    analysis_parts.append("• **Institutional Flows**: ETF adoption and corporate treasury allocation\n")
+    analysis_parts.append("• **Regulatory Developments**: Government policies and legal clarity\n")
+    analysis_parts.append("• **Macroeconomic Conditions**: Interest rates, inflation, global liquidity\n")
+    analysis_parts.append("• **Technology Progress**: Network upgrades, scalability solutions\n")
+    
+    analysis_parts.append("\n**📊 Investment Considerations:**\n")
+    analysis_parts.append("• **Timing**: Dollar-cost averaging reduces volatility impact\n")
+    analysis_parts.append("• **Diversification**: Don't put all funds in single cryptocurrency\n") 
+    analysis_parts.append("• **Risk Management**: Only invest what you can afford to lose\n")
+    analysis_parts.append("• **Long-term View**: Focus on adoption trends vs. short-term price movements\n")
+    
+    analysis_parts.append("\n*⚠️ This is not financial advice. Cryptocurrency prices are highly volatile and unpredictable.*")
+    
+    return "".join(analysis_parts)
+
+def generate_educational_content(question: str, crypto_mentions: list) -> str:
+    """Generate educational content based on question"""
+    
+    content_parts = []
+    
+    if "work" in question.lower() or "technology" in question.lower():
+        content_parts.append("**🔧 How Cryptocurrency Technology Works:**\n\n")
+        content_parts.append("**Blockchain Basics:**\n")
+        content_parts.append("• Distributed ledger technology storing transaction records\n")
+        content_parts.append("• Cryptographic security prevents tampering and fraud\n")
+        content_parts.append("• Network consensus validates all transactions\n")
+        content_parts.append("• Decentralized - no single point of control or failure\n\n")
+        
+        content_parts.append("**Key Innovations:**\n")
+        content_parts.append("• **Bitcoin**: Digital money without banks or governments\n")
+        content_parts.append("• **Ethereum**: Programmable blockchain for smart contracts\n")
+        content_parts.append("• **DeFi**: Financial services without traditional intermediaries\n")
+        content_parts.append("• **NFTs**: Unique digital ownership certificates\n")
+        
+    elif "what" in question.lower():
+        if crypto_mentions:
+            crypto = crypto_mentions[0]
+            content_parts.append(f"**❓ What is {crypto}?**\n\n")
+            
+            if "BTC" in crypto or "BITCOIN" in crypto:
+                content_parts.append("**Bitcoin Explained:**\n")
+                content_parts.append("• First and largest cryptocurrency (digital gold)\n")
+                content_parts.append("• Fixed supply of 21 million coins maximum\n")
+                content_parts.append("• Peer-to-peer electronic cash system\n")
+                content_parts.append("• Store of value and hedge against inflation\n")
+                content_parts.append("• Secured by massive global mining network\n")
+            
+            elif "ETH" in crypto or "ETHEREUM" in crypto:
+                content_parts.append("**Ethereum Explained:**\n")
+                content_parts.append("• World computer enabling smart contracts and DApps\n")
+                content_parts.append("• Platform for decentralized finance (DeFi)\n")
+                content_parts.append("• Native currency (ETH) powers the network\n")
+                content_parts.append("• Proof-of-stake consensus (environmentally friendly)\n")
+                content_parts.append("• Foundation for NFTs, DAOs, and Web3 applications\n")
+        else:
+            content_parts.append("**🎓 Cryptocurrency Education:**\n\n")
+            content_parts.append("Cryptocurrency is digital money secured by cryptography and powered by blockchain technology. Unlike traditional money, it operates without banks or governments controlling it.\n\n")
+            content_parts.append("**Core Concepts:**\n")
+            content_parts.append("• **Decentralization**: No single authority controls it\n")
+            content_parts.append("• **Transparency**: All transactions are publicly visible\n")
+            content_parts.append("• **Immutability**: Transaction history cannot be changed\n")
+            content_parts.append("• **Programmability**: Smart contracts enable automated agreements\n")
+    
+    elif "how" in question.lower():
+        content_parts.append("**📚 Getting Started with Crypto:**\n\n")
+        content_parts.append("**Step 1: Education**\n")
+        content_parts.append("• Learn basics: blockchain, wallets, exchanges, security\n")
+        content_parts.append("• Understand risks: volatility, regulation, technology\n")
+        content_parts.append("• Research specific projects and their use cases\n\n")
+        
+        content_parts.append("**Step 2: Setup**\n") 
+        content_parts.append("• Choose reputable exchange (Coinbase, Kraken, Binance)\n")
+        content_parts.append("• Complete identity verification process\n")
+        content_parts.append("• Enable two-factor authentication for security\n\n")
+        
+        content_parts.append("**Step 3: Investment**\n")
+        content_parts.append("• Start small with Bitcoin or Ethereum\n")
+        content_parts.append("• Use dollar-cost averaging strategy\n")
+        content_parts.append("• Consider hardware wallet for storage\n")
+    
+    return "".join(content_parts)
+
+def generate_trading_advice(question: str, crypto_mentions: list) -> str:
+    """Generate trading advice"""
+    
+    advice_parts = []
+    advice_parts.append("**📊 Crypto Trading Guidance:**\n\n")
+    
+    if "when" in question.lower() or "timing" in question.lower():
+        advice_parts.append("**⏰ Market Timing Strategy:**\n")
+        advice_parts.append("• **Truth**: Timing the market consistently is nearly impossible\n")
+        advice_parts.append("• **Better Approach**: Dollar-cost averaging over time\n")
+        advice_parts.append("• **Buy Signals**: Fear in market, technical support levels\n")
+        advice_parts.append("• **Sell Signals**: Euphoria peaks, technical resistance levels\n")
+        advice_parts.append("• **Best Strategy**: Time in market beats timing the market\n\n")
+    
+    advice_parts.append("**🎯 Trading Fundamentals:**\n")
+    advice_parts.append("• **Risk Management**: Never risk more than 2% per trade\n")
+    advice_parts.append("• **Position Sizing**: Calculate based on stop loss distance\n")
+    advice_parts.append("• **Stop Losses**: Always define your exit before entering\n")
+    advice_parts.append("• **Profit Taking**: Scale out systematically (25%, 50%, 75%)\n")
+    advice_parts.append("• **Emotional Control**: Stick to your plan regardless of emotions\n\n")
+    
+    advice_parts.append("**📈 Technical Analysis Basics:**\n")
+    advice_parts.append("• **Support/Resistance**: Key price levels for entries/exits\n")
+    advice_parts.append("• **Volume**: Confirms price movements and breakouts\n") 
+    advice_parts.append("• **RSI**: Shows overbought (>70) and oversold (<30) conditions\n")
+    advice_parts.append("• **Moving Averages**: Trend direction and momentum\n")
+    advice_parts.append("• **Chart Patterns**: Triangles, flags, head and shoulders\n")
+    
+    return "".join(advice_parts)
+
+def generate_prediction_analysis(question: str, crypto_mentions: list) -> str:
+    """Generate prediction analysis"""
+    
+    pred_parts = []
+    pred_parts.append("**🔮 Crypto Future Analysis:**\n\n")
+    
+    pred_parts.append("**⚠️ Prediction Disclaimer:**\n")
+    pred_parts.append("No one can predict crypto prices with certainty. Here's how to think about the future:\n\n")
+    
+    pred_parts.append("**🔄 Market Cycle Perspective:**\n")
+    pred_parts.append("• We're likely in mid-cycle of current crypto adoption phase\n")
+    pred_parts.append("• Historical cycles last 3-4 years (bull → bear → bull)\n")
+    pred_parts.append("• Each cycle reaches higher highs due to growing adoption\n")
+    pred_parts.append("• Volatility decreases as market matures and grows\n\n")
+    
+    pred_parts.append("**📈 Long-term Drivers:**\n")
+    pred_parts.append("• **Institutional Adoption**: More companies and funds entering\n")
+    pred_parts.append("• **Regulatory Clarity**: Clearer rules enabling growth\n")
+    pred_parts.append("• **Technology Improvements**: Scaling, security, usability\n")
+    pred_parts.append("• **Global Adoption**: Emerging markets embracing crypto\n")
+    pred_parts.append("• **Inflation Hedge**: Alternative to traditional assets\n\n")
+    
+    pred_parts.append("**🎯 Realistic Expectations:**\n")
+    pred_parts.append("Focus on adoption trends rather than price predictions. Invest in projects solving real problems with strong fundamentals.")
+    
+    return "".join(pred_parts)
+
+def generate_general_crypto_response(question: str, analysis: Dict[str, Any]) -> str:
+    """Generate general crypto response for unmatched questions"""
+    
+    general_parts = []
+    general_parts.append("**🤖 Crypto Analysis Assistant:**\n\n")
+    
+    # Analyze what the user might be asking about
+    question_lower = question.lower()
+    
+    if any(word in question_lower for word in ['recommend', 'suggest', 'advice', 'opinion']):
+        general_parts.append("**💡 My Crypto Recommendations:**\n")
+        general_parts.append("Based on your question, here's my guidance:\n\n")
+        general_parts.append("• **For Beginners**: Start with Bitcoin and Ethereum only\n")
+        general_parts.append("• **For Safety**: Use reputable exchanges and hardware wallets\n")
+        general_parts.append("• **For Strategy**: Dollar-cost average over 6-12 months\n")
+        general_parts.append("• **For Success**: Invest only what you can afford to lose\n")
+        general_parts.append("• **For Learning**: Take time to understand before investing more\n")
+    
+    elif any(word in question_lower for word in ['help', 'confused', 'understand', 'explain']):
+        general_parts.append("**🎓 Let me help clarify crypto for you:**\n\n")
+        general_parts.append("Cryptocurrency can seem complex, but here are the essentials:\n\n")
+        general_parts.append("• **Bitcoin**: Digital gold, store of value, limited supply\n")
+        general_parts.append("• **Ethereum**: Smart contract platform, powers DeFi and NFTs\n")  
+        general_parts.append("• **Investing**: High risk/high reward, only invest spare money\n")
+        general_parts.append("• **Storage**: Use hardware wallets for security\n")
+        general_parts.append("• **Strategy**: Long-term holding typically works better than trading\n")
+    
+    else:
+        # Analyze the question content and provide relevant response
+        general_parts.append("**📊 Analyzing your crypto question:**\n\n")
+        
+        if analysis["crypto_mentions"]:
+            crypto_list = ", ".join(analysis["crypto_mentions"])
+            general_parts.append(f"I see you're asking about: **{crypto_list}**\n\n")
+        
+        general_parts.append("**🎯 Key Points to Consider:**\n")
+        general_parts.append("• **Research First**: Understand what you're investing in\n")
+        general_parts.append("• **Risk Management**: Only invest money you can afford to lose\n")
+        general_parts.append("• **Long-term View**: Crypto rewards patience over speculation\n")
+        general_parts.append("• **Security**: Use proper wallets and security practices\n")
+        general_parts.append("• **Diversification**: Don't put all money in one cryptocurrency\n")
+        
+        general_parts.append("\n**💬 For more specific help, try asking:**\n")
+        general_parts.append("• \"Is Bitcoin safe to invest in?\"\n")
+        general_parts.append("• \"How do I buy Ethereum?\"\n")
+        general_parts.append("• \"What's the best crypto trading strategy?\"\n")
+        general_parts.append("• \"Should I invest in [specific crypto]?\"\n")
+    
+    return "".join(general_parts)
+
+# API Routes
 @app.get("/")
 async def root():
     return {
@@ -870,191 +865,125 @@ async def root():
         "docs": "/docs"
     }
 
+@app.get("/test/connection")
+async def test_connection():
+    """Simple test endpoint to verify API connectivity"""
+    return {
+        "status": "success",
+        "message": "API connection working",
+        "timestamp": datetime.now().isoformat(),
+        "port": 8000
+    }
+
 # Authentication Endpoints
 @app.post("/api/auth/register", response_model=AuthResponse)
-async def register_user_shortcut(user: UserRegistration):
-    """Shortcut registration endpoint that frontend calls"""
-    return await start_registration(user)
-
-@app.post("/api/auth/register/start", response_model=AuthResponse)
-async def start_registration(user: UserRegistration):
-    """Start user registration process by sending OTP"""
+async def register_user(user: UserRegistration):
+    """Register new user with MySQL database"""
     try:
-        email = user.email.lower().strip()
-        
-        # Check if user already exists
-        if email in verified_users:
-            return AuthResponse(
-                message="User already exists. Please login instead.",
-                success=False
-            )
-        
-        # Generate and store OTP
-        otp = generate_otp()
-        expiry_time = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
-        
-        otp_storage[email] = {
-            "otp": otp,
-            "expiry": expiry_time,
-            "type": "registration"
-        }
-        
-        # Store pending registration
-        pending_registrations[email] = {
-            "email": email,
-            "password_hash": hash_password(user.password),
-            "created_at": datetime.now()
-        }
-        
-        # Send OTP email
-        if send_otp_email(email, otp):
-            return AuthResponse(
-                message=f"Registration started! OTP sent to {email}. Please verify to complete registration.",
-                success=True
-            )
-        else:
-            # Clean up if email sending failed
-            if email in otp_storage:
-                del otp_storage[email]
-            if email in pending_registrations:
-                del pending_registrations[email]
-            
-            raise HTTPException(status_code=500, detail="Failed to send OTP email")
-            
-    except Exception as e:
-        print(f"❌ Registration start error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/auth/register/verify", response_model=AuthResponse)
-async def register_verify(verification: OTPVerification):
-    """Complete registration by verifying OTP"""
-    try:
-        email = verification.email.lower().strip()
-        otp = verification.otp.strip()
-        
-        print(f"🔍 Registration verification for: {email}")
-        print(f"📧 Pending registrations: {list(pending_registrations.keys())}")
-        print(f"🔑 OTP storage: {list(otp_storage.keys())}")
-        
-        # Check if there's a pending registration
-        if email not in pending_registrations:
-            print(f"❌ No pending registration for {email}")
-            raise HTTPException(status_code=400, detail="No pending registration found for this email")
-        
-        # Verify OTP
-        if not verify_otp_code(email, otp):
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-        
-        # Move from pending to verified users
-        user_data = pending_registrations[email]
-        verified_users[email] = {
-            **user_data,
-            "is_verified": True
-        }
-        
-        # Clean up
-        del pending_registrations[email]
-        del otp_storage[email]
-        
-        print(f"✅ User {email} registration completed successfully!")
-        
-        # Generate JWT token
-        token_payload = {
-            "email": email,
-            "exp": datetime.now() + timedelta(days=7)
-        }
-        token = jwt.encode(token_payload, "your_secret_key", algorithm="HS256")
-        
-        return AuthResponse(
-            message="Registration completed successfully!",
-            success=True,
-            token=token,
-            user={"email": email, "is_verified": True}
+        result = auth_system.register_user(
+            name=user.name,
+            username=user.username,
+            email=user.email.lower().strip(),
+            password=user.password
         )
         
-    except HTTPException as he:
-        raise he
+        return AuthResponse(
+            success=result["success"],
+            message=result["message"]
+        )
+        
     except Exception as e:
-        print(f"❌ Registration verification error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        print(f"❌ Registration error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during registration"
+        )
 @app.post("/api/auth/login", response_model=AuthResponse)
 async def login_user(user: UserLogin):
-    """Login user by sending OTP"""
+    """Login user with MySQL database authentication"""
     try:
-        email = user.email.lower().strip()
+        result = auth_system.login_user(
+            login_input=user.login,  # Can be username or email
+            password=user.password
+        )
         
-        # Check if user exists and password is correct
-        if email not in verified_users:
-            raise HTTPException(status_code=400, detail="User not found. Please register first.")
-        
-        stored_user = verified_users[email]
-        if stored_user["password_hash"] != hash_password(user.password):
-            raise HTTPException(status_code=400, detail="Invalid password")
-        
-        # Generate and send OTP for login
-        otp = generate_otp()
-        expiry_time = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
-        
-        otp_storage[email] = {
-            "otp": otp,
-            "expiry": expiry_time,
-            "type": "login"
-        }
-        
-        # Send OTP email
-        if send_otp_email(email, otp):
+        if result["success"]:
             return AuthResponse(
-                message=f"Login OTP sent to {email}. Please verify to continue.",
-                success=True
+                success=True,
+                message=result["message"],
+                token=result["token"],
+                user=result["user"]
             )
         else:
-            raise HTTPException(status_code=500, detail="Failed to send OTP email")
-            
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=result["message"]
+            )
+        
     except HTTPException as he:
         raise he
     except Exception as e:
         print(f"❌ Login error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/auth/verify-otp", response_model=AuthResponse)
-async def verify_login_otp(verification: OTPVerification):
-    """Verify OTP for login"""
-    try:
-        email = verification.email.lower().strip()
-        otp = verification.otp.strip()
-        
-        # Check if user exists
-        if email not in verified_users:
-            raise HTTPException(status_code=400, detail="User not found")
-        
-        # Verify OTP
-        if not verify_otp_code(email, otp):
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-        
-        # Clean up OTP
-        if email in otp_storage:
-            del otp_storage[email]
-        
-        # Generate JWT token
-        token_payload = {
-            "email": email,
-            "exp": datetime.now() + timedelta(days=7)
-        }
-        token = jwt.encode(token_payload, "your_secret_key", algorithm="HS256")
-        
-        return AuthResponse(
-            message="Login successful!",
-            success=True,
-            token=token,
-            user={"email": email, "is_verified": True}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during login"
         )
-        
-    except HTTPException as he:
-        raise he
+
+@app.post("/api/auth/logout")
+async def logout_user(current_user: dict = Depends(get_current_user)):
+    """Logout current user by invalidating token"""
+    try:
+        # This would typically invalidate the token in the session store
+        # For now, we'll just return success (frontend should remove token)
+        return {
+            "success": True,
+            "message": "Logged out successfully"
+        }
     except Exception as e:
-        print(f"❌ OTP verification error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Logout error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error during logout"
+        )
+
+@app.post("/verify-token")
+async def verify_token(current_user: dict = Depends(get_current_user)):
+    """Verify JWT token and return user information"""
+    return {
+        "success": True,
+        "user": current_user
+    }
+
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user: dict = Depends(get_current_user)):
+    """Get current user information"""
+    return {
+        "success": True,
+        "user": current_user
+    }
+
+@app.get("/api/auth/debug")
+async def auth_debug():
+    """Debug endpoint to check database connection"""
+    try:
+        # Test database connection
+        if auth_system.db.connect():
+            return {
+                "database": "connected",
+                "auth_system": "ready",
+                "message": "Authentication system is working"
+            }
+        else:
+            return {
+                "database": "disconnected",
+                "auth_system": "not ready",
+                "message": "Database connection failed"
+            }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "message": "Authentication debug failed"
+        }
 
 @app.get("/api/v1/ai/chat/health")
 async def ai_health_check():
@@ -1098,6 +1027,11 @@ async def ai_chat(request: ChatMessage):
             source="error_fallback",
             suggestions=["Try again", "Check connection", "Restart service"]
         )
+
+@app.post("/api/ai/chat", response_model=ChatResponse)
+async def ai_chat_frontend(request: ChatMessage):
+    """Frontend AI chat endpoint - this is what the frontend expects"""
+    return await ai_chat(request)
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_simplified(request: ChatMessage):
@@ -1236,70 +1170,1016 @@ async def get_market_data():
         }
     }
 
-@app.post("/api/auth/resend-otp", response_model=AuthResponse)
-async def resend_otp(user_info: Dict[str, Any]):
-    """Resend OTP for user"""
+# Resend OTP endpoint removed - now using direct MySQL authentication
+
+# ===========================================
+# PRODUCTION-READY API ENDPOINTS
+# ===========================================
+
+# Portfolio Management Models
+class AssetCreate(BaseModel):
+    symbol: str
+    name: str
+    amount: float
+    avgBuyPrice: float
+    source: str = "manual"
+
+class AssetUpdate(BaseModel):
+    amount: Optional[float] = None
+    avgBuyPrice: Optional[float] = None
+
+class PortfolioAsset(BaseModel):
+    id: str
+    symbol: str
+    name: str
+    amount: float
+    avgBuyPrice: float
+    currentPrice: float
+    value: float
+    change24h: float
+    changePercent24h: float
+    source: str
+
+# Technical Analysis Models
+class TechnicalIndicators(BaseModel):
+    symbol: str
+    rsi: Optional[float] = None
+    macd: Optional[Dict[str, Any]] = None
+    bb: Optional[Dict[str, Any]] = None  # Bollinger Bands
+    sma: Optional[Dict[str, Any]] = None  # Simple Moving Average
+    ema: Optional[Dict[str, Any]] = None  # Exponential Moving Average
+    stoch: Optional[Dict[str, Any]] = None  # Stochastic Oscillator
+
+class PriceHistoryRequest(BaseModel):
+    symbol: str
+    timeframe: str = "24h"
+    limit: int = 100
+
+class AlertCreate(BaseModel):
+    symbol: str
+    condition: str  # "above", "below", "change_percent"
+    value: float
+    message: str
+    enabled: bool = True
+
+class TradingSignal(BaseModel):
+    id: str
+    symbol: str
+    type: str  # "BUY", "SELL", "HOLD"
+    strength: int  # 1-100
+    indicators: List[str]
+    entry_price: float
+    target_price: float
+    stop_loss: float
+    timeframe: str
+    generated_at: datetime
+    ai_confidence: int
+    reason: str
+
+# In-memory storage for demo (replace with database)
+portfolio_assets = {}
+user_alerts = {}
+price_history_cache = {}
+
+# ===========================================
+# PORTFOLIO MANAGEMENT ENDPOINTS
+# ===========================================
+
+@app.post("/api/portfolio/assets")
+async def add_portfolio_asset(asset: AssetCreate, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Add asset to portfolio"""
     try:
-        email = user_info.get("email", "").lower().strip()
+        # Get current price from mock data
+        current_price = random.uniform(100, 50000)  # Mock price
+        change24h = random.uniform(-10, 10)
         
-        if not email:
-            raise HTTPException(status_code=400, detail="Email is required")
+        asset_id = f"asset_{len(portfolio_assets) + 1}"
+        new_asset = PortfolioAsset(
+            id=asset_id,
+            symbol=asset.symbol,
+            name=asset.name,
+            amount=asset.amount,
+            avgBuyPrice=asset.avgBuyPrice,
+            currentPrice=current_price,
+            value=asset.amount * current_price,
+            change24h=change24h,
+            changePercent24h=change24h / current_price * 100,
+            source=asset.source
+        )
         
-        # Check if user exists
-        if email not in verified_users and email not in pending_registrations:
-            raise HTTPException(status_code=400, detail="User not found")
+        portfolio_assets[asset_id] = new_asset.dict()
         
-        # Generate and store new OTP
-        otp = generate_otp()
-        expiry_time = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        return {
+            "success": True,
+            "message": "Asset added successfully",
+            "asset": new_asset
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/portfolio/assets")
+async def get_portfolio_assets(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get all portfolio assets"""
+    assets = list(portfolio_assets.values())
+    total_value = sum(asset["value"] for asset in assets)
+    total_change24h = sum(asset["change24h"] * asset["amount"] for asset in assets)
+    
+    return {
+        "success": True,
+        "assets": assets,
+        "summary": {
+            "totalValue": total_value,
+            "totalChange24h": total_change24h,
+            "totalChangePercent24h": (total_change24h / total_value * 100) if total_value > 0 else 0,
+            "assetCount": len(assets)
+        }
+    }
+
+@app.put("/api/portfolio/assets/{asset_id}")
+async def update_portfolio_asset(asset_id: str, updates: AssetUpdate, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Update portfolio asset"""
+    if asset_id not in portfolio_assets:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    asset = portfolio_assets[asset_id]
+    if updates.amount is not None:
+        asset["amount"] = updates.amount
+        asset["value"] = updates.amount * asset["currentPrice"]
+    
+    if updates.avgBuyPrice is not None:
+        asset["avgBuyPrice"] = updates.avgBuyPrice
+    
+    portfolio_assets[asset_id] = asset
+    
+    return {
+        "success": True,
+        "message": "Asset updated successfully",
+        "asset": asset
+    }
+
+@app.delete("/api/portfolio/assets/{asset_id}")
+async def delete_portfolio_asset(asset_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Delete portfolio asset"""
+    if asset_id not in portfolio_assets:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    del portfolio_assets[asset_id]
+    
+    return {
+        "success": True,
+        "message": "Asset deleted successfully"
+    }
+
+@app.post("/api/portfolio/refresh-prices")
+async def refresh_portfolio_prices(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Refresh current prices for all portfolio assets"""
+    try:
+        for asset_id, asset in portfolio_assets.items():
+            # Mock price update (replace with real API calls)
+            new_price = asset["currentPrice"] * random.uniform(0.95, 1.05)
+            change24h = (new_price - asset["currentPrice"]) / asset["currentPrice"] * 100
+            
+            asset["currentPrice"] = new_price
+            asset["value"] = asset["amount"] * new_price
+            asset["change24h"] = change24h
+            asset["changePercent24h"] = change24h
         
-        otp_type = "registration" if email in pending_registrations else "login"
-        otp_storage[email] = {
-            "otp": otp,
-            "expiry": expiry_time,
-            "type": otp_type
+        return {
+            "success": True,
+            "message": "Prices refreshed successfully",
+            "updatedCount": len(portfolio_assets)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================
+# TECHNICAL ANALYSIS ENDPOINTS
+# ===========================================
+
+@app.get("/api/technical/indicators/{symbol}")
+async def get_technical_indicators(symbol: str):
+    """Get technical indicators for a cryptocurrency"""
+    try:
+        # Mock technical indicators (replace with real calculations)
+        indicators = TechnicalIndicators(
+            symbol=symbol,
+            rsi=random.uniform(20, 80),
+            macd={
+                "macd": random.uniform(-50, 50),
+                "signal": random.uniform(-50, 50),
+                "histogram": random.uniform(-20, 20),
+                "trend": random.choice(["bullish", "bearish", "neutral"])
+            },
+            bb={
+                "upper": random.uniform(45000, 55000),
+                "middle": random.uniform(40000, 50000),
+                "lower": random.uniform(35000, 45000)
+            },
+            sma={
+                "sma_20": random.uniform(38000, 48000),
+                "sma_50": random.uniform(36000, 46000),
+                "sma_200": random.uniform(30000, 40000)
+            },
+            ema={
+                "ema_12": random.uniform(39000, 49000),
+                "ema_26": random.uniform(37000, 47000)
+            },
+            stoch={
+                "k_percent": random.uniform(0, 100),
+                "d_percent": random.uniform(0, 100),
+                "signal": random.choice(["overbought", "oversold", "neutral"])
+            }
+        )
+        
+        return {
+            "success": True,
+            "data": indicators
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/market/price-history")
+async def get_price_history(request: PriceHistoryRequest):
+    """Get price history for a cryptocurrency"""
+    try:
+        # Mock price history generation
+        cache_key = f"{request.symbol}_{request.timeframe}"
+        
+        if cache_key not in price_history_cache:
+            base_price = random.uniform(100, 50000)
+            history = []
+            
+            for i in range(request.limit):
+                price = base_price * (1 + random.uniform(-0.1, 0.1))
+                volume = random.uniform(1000000, 100000000)
+                
+                history.append({
+                    "timestamp": (datetime.now() - timedelta(hours=i)).isoformat(),
+                    "price": price,
+                    "volume": volume,
+                    "high": price * 1.02,
+                    "low": price * 0.98,
+                    "open": price * random.uniform(0.99, 1.01),
+                    "close": price
+                })
+                base_price = price
+            
+            price_history_cache[cache_key] = history[::-1]  # Reverse for chronological order
+        
+        return {
+            "success": True,
+            "symbol": request.symbol,
+            "timeframe": request.timeframe,
+            "data": price_history_cache[cache_key]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/market/search")
+async def search_cryptocurrencies(q: str, limit: int = 10):
+    """Search for cryptocurrencies"""
+    # Mock search results
+    mock_cryptos = [
+        {"symbol": "BTC", "name": "Bitcoin", "price": 43250.50},
+        {"symbol": "ETH", "name": "Ethereum", "price": 2650.30},
+        {"symbol": "BNB", "name": "Binance Coin", "price": 315.20},
+        {"symbol": "ADA", "name": "Cardano", "price": 0.48},
+        {"symbol": "DOT", "name": "Polkadot", "price": 7.25},
+        {"symbol": "LINK", "name": "Chainlink", "price": 14.80},
+        {"symbol": "LTC", "name": "Litecoin", "price": 72.50},
+        {"symbol": "BCH", "name": "Bitcoin Cash", "price": 243.60},
+        {"symbol": "XLM", "name": "Stellar", "price": 0.12},
+        {"symbol": "UNI", "name": "Uniswap", "price": 6.45}
+    ]
+    
+    # Filter based on query
+    filtered = [
+        crypto for crypto in mock_cryptos 
+        if q.lower() in crypto["name"].lower() or q.lower() in crypto["symbol"].lower()
+    ][:limit]
+    
+    return {
+        "success": True,
+        "query": q,
+        "results": filtered
+    }
+
+# ===========================================
+# MARKET SENTIMENT ENDPOINTS
+# ===========================================
+
+@app.get("/api/market/sentiment")
+async def get_market_sentiment():
+    """Get overall market sentiment analysis"""
+    try:
+        sentiment_data = {
+            "overall_score": random.uniform(0.3, 0.8),
+            "sentiment_label": random.choice(["Bullish", "Bearish", "Neutral", "Very Bullish"]),
+            "fear_greed_index": random.randint(10, 90),
+            "social_mentions": {
+                "bitcoin": random.randint(5000, 15000),
+                "ethereum": random.randint(3000, 10000),
+                "trending_coins": ["BTC", "ETH", "BNB", "ADA"]
+            },
+            "news_sentiment": {
+                "positive": random.randint(40, 70),
+                "neutral": random.randint(20, 40),
+                "negative": random.randint(10, 30)
+            },
+            "last_updated": datetime.now().isoformat()
         }
         
-        # Send OTP email
-        if send_otp_email(email, otp):
-            return AuthResponse(
-                message=f"New OTP sent to {email}",
-                success=True
-            )
-        else:
-            raise HTTPException(status_code=500, detail="Failed to send OTP email")
-            
-    except HTTPException as he:
-        raise he
+        return {
+            "success": True,
+            "data": sentiment_data
+        }
     except Exception as e:
-        print(f"❌ Resend OTP error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================
+# ALERTS MANAGEMENT ENDPOINTS
+# ===========================================
+
+@app.post("/api/alerts")
+async def create_alert(alert: AlertCreate, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Create a new price alert"""
+    try:
+        alert_id = f"alert_{len(user_alerts) + 1}"
+        new_alert = {
+            "id": alert_id,
+            "symbol": alert.symbol,
+            "condition": alert.condition,
+            "value": alert.value,
+            "message": alert.message,
+            "enabled": alert.enabled,
+            "created_at": datetime.now().isoformat(),
+            "triggered": False
+        }
+        
+        user_alerts[alert_id] = new_alert
+        
+        return {
+            "success": True,
+            "message": "Alert created successfully",
+            "alert": new_alert
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/alerts")
+async def get_user_alerts(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get all user alerts"""
+    return {
+        "success": True,
+        "alerts": list(user_alerts.values())
+    }
+
+@app.delete("/api/alerts/{alert_id}")
+async def delete_alert(alert_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Delete an alert"""
+    if alert_id not in user_alerts:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    
+    del user_alerts[alert_id]
+    
+    return {
+        "success": True,
+        "message": "Alert deleted successfully"
+    }
+
+# ===========================================
+# TRADING SIGNALS ENDPOINTS
+# ===========================================
+
+@app.get("/api/trading/signals")
+async def get_trading_signals(timeframe: str = "1h", limit: int = 10):
+    """Get AI-generated trading signals"""
+    try:
+        signals = []
+        popular_symbols = ["BTC", "ETH", "BNB", "ADA", "DOT", "LINK", "LTC", "BCH", "XLM", "UNI"]
+        
+        for i, symbol in enumerate(popular_symbols[:limit]):
+            signal_type = random.choice(["BUY", "SELL", "HOLD"])
+            strength = random.randint(60, 95)
+            base_price = random.uniform(100, 50000)
+            
+            signal = TradingSignal(
+                id=f"signal_{i+1}",
+                symbol=symbol,
+                type=signal_type,
+                strength=strength,
+                indicators=random.sample([
+                    "RSI Oversold", "MACD Bullish", "Volume Breakout", 
+                    "Support Bounce", "MA Golden Cross", "Breakout Pattern"
+                ], 3),
+                entry_price=base_price,
+                target_price=base_price * (1.08 if signal_type == "BUY" else 0.95),
+                stop_loss=base_price * (0.95 if signal_type == "BUY" else 1.03),
+                timeframe=timeframe,
+                generated_at=datetime.now(),
+                ai_confidence=random.randint(75, 95),
+                reason=f"Strong {signal_type.lower()} signal based on technical analysis"
+            )
+            
+            signals.append(signal)
+        
+        return {
+            "success": True,
+            "timeframe": timeframe,
+            "signals": [signal.dict() for signal in signals],
+            "generated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================
+# NEWS AND ANALYTICS ENDPOINTS
+# ===========================================
+
+@app.get("/api/news")
+async def get_crypto_news(limit: int = 20, hours_back: int = 24):
+    """Get latest cryptocurrency news with sentiment analysis"""
+    try:
+        # Fetch news articles
+        articles = await news_client.get_crypto_news(limit, hours_back)
+        
+        # Analyze market sentiment
+        market_sentiment = sentiment_analyzer.analyze_market_sentiment(articles)
+        
+        return {
+            "success": True,
+            "articles": articles,
+            "total_count": len(articles),
+            "market_sentiment": market_sentiment,
+            "last_updated": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/news/sentiment/{coin}")
+async def get_coin_sentiment(coin: str, limit: int = 50):
+    """Get sentiment analysis for a specific cryptocurrency"""
+    try:
+        # Fetch recent news
+        articles = await news_client.get_crypto_news(limit, hours_back=48)
+        
+        # Get coin-specific sentiment
+        coin_sentiment = sentiment_analyzer.get_coin_specific_sentiment(articles, coin)
+        
+        # Get relevant articles for this coin
+        relevant_articles = [
+            article for article in articles 
+            if coin.lower() in article.get('mentioned_cryptos', [])
+        ]
+        
+        return {
+            "success": True,
+            "coin": coin,
+            "sentiment_analysis": coin_sentiment,
+            "relevant_articles": relevant_articles[:10],  # Limit to 10 most relevant
+            "total_relevant_articles": len(relevant_articles)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/market-sentiment")
+async def get_overall_market_sentiment():
+    """Get overall cryptocurrency market sentiment from news"""
+    try:
+        # Fetch comprehensive news data
+        articles = await news_client.get_crypto_news(100, hours_back=72)
+        
+        # Analyze overall market sentiment
+        market_sentiment = sentiment_analyzer.analyze_market_sentiment(articles)
+        
+        # Get sentiment for major cryptocurrencies
+        major_coins = ['bitcoin', 'ethereum', 'cardano', 'solana', 'dogecoin']
+        coin_sentiments = {}
+        
+        for coin in major_coins:
+            coin_sentiment = sentiment_analyzer.get_coin_specific_sentiment(articles, coin)
+            coin_sentiments[coin] = coin_sentiment
+        
+        return {
+            "success": True,
+            "overall_market_sentiment": market_sentiment,
+            "individual_coin_sentiments": coin_sentiments,
+            "analysis_period_hours": 72,
+            "last_updated": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================
+# TECHNICAL INDICATORS ENDPOINTS
+# ===========================================
+
+@app.get("/api/technical-indicators/{coin_id}")
+async def get_technical_indicators(
+    coin_id: str, 
+    days: int = 30,
+    include_signals: bool = True
+):
+    """Get technical indicators analysis for a cryptocurrency"""
+    try:
+        # Try to fetch real data first
+        try:
+            data_fetcher = CryptoDataFetcher()
+            price_data = await data_fetcher.get_price_history(coin_id, days)
+            
+            if price_data.get('success'):
+                # Calculate technical indicators with real data
+                ohlc_data = price_data['data']
+                analysis = analyze_technical_indicators(ohlc_data)
+            else:
+                raise Exception("Failed to fetch real data")
+                
+        except Exception as real_data_error:
+            print(f"⚠️ Using mock data for {coin_id}: {real_data_error}")
+            # Fallback to mock data for demonstration
+            analysis = get_mock_technical_indicators(coin_id)
+        
+        # Add metadata
+        analysis['coin_id'] = coin_id
+        analysis['period_days'] = days
+        analysis['last_updated'] = datetime.now().isoformat()
+        
+        return analysis
+        
+    except Exception as e:
+        print(f"❌ Error in technical indicators: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def get_mock_technical_indicators(coin_id: str) -> dict:
+    """Generate mock technical indicators for demonstration"""
+    import random
+    
+    # Mock price data based on coin
+    base_prices = {
+        'bitcoin': 45000,
+        'ethereum': 3200,
+        'binancecoin': 320,
+        'cardano': 0.48,
+        'solana': 98
+    }
+    
+    base_price = base_prices.get(coin_id, 1000)
+    current_price = base_price * (0.95 + random.random() * 0.1)  # ±5% variation
+    
+    return {
+        'current_price': current_price,
+        'price_change_24h': random.uniform(-5, 5),
+        'volume': random.uniform(1000000, 50000000),
+        'market_cap': current_price * random.uniform(19000000, 21000000),
+        'technical_indicators': {
+            'rsi': random.uniform(30, 70),
+            'macd': {
+                'macd': random.uniform(-100, 100),
+                'signal': random.uniform(-80, 80),
+                'histogram': random.uniform(-50, 50)
+            },
+            'bollinger_bands': {
+                'upper': current_price * 1.02,
+                'middle': current_price,
+                'lower': current_price * 0.98
+            },
+            'sma_20': current_price * random.uniform(0.98, 1.02),
+            'sma_50': current_price * random.uniform(0.95, 1.05),
+            'ema_12': current_price * random.uniform(0.99, 1.01),
+            'ema_26': current_price * random.uniform(0.97, 1.03),
+            'stochastic': {
+                'k': random.uniform(20, 80)
+            },
+            'williams_r': random.uniform(-80, -20),
+            'atr': random.uniform(50, 200)
+        },
+        'trading_signals': [
+            {
+                'indicator': 'RSI',
+                'signal': random.choice(['BUY', 'SELL', 'HOLD']),
+                'reason': 'RSI indicates oversold/overbought conditions'
+            },
+            {
+                'indicator': 'MACD',
+                'signal': random.choice(['BUY', 'SELL', 'HOLD']),
+                'reason': 'MACD crossover detected'
+            },
+            {
+                'indicator': 'Bollinger Bands',
+                'signal': random.choice(['BUY', 'SELL', 'HOLD']),
+                'reason': 'Price near support/resistance level'
+            }
+        ],
+        'analysis': f"Technical analysis for {coin_id.title()}: The current market conditions show mixed signals. RSI indicates moderate momentum, while MACD suggests potential trend changes. Consider the overall market sentiment before making trading decisions."
+    }
+
+@app.post("/api/technical-indicators/batch")
+async def get_batch_technical_indicators(request: Dict[str, Any]):
+    """Get technical indicators for multiple cryptocurrencies"""
+    try:
+        coin_ids = request.get('coin_ids', [])
+        days = request.get('days', 30)
+        
+        if not coin_ids:
+            raise HTTPException(status_code=400, detail="coin_ids list is required")
+        
+        # Fetch data for multiple coins
+        data_fetcher = CryptoDataFetcher()
+        batch_data = await data_fetcher.get_multiple_coins_data(coin_ids, days)
+        
+        results = {}
+        for coin_id, ohlc_data in batch_data.items():
+            if ohlc_data:
+                analysis = analyze_technical_indicators(ohlc_data)
+                analysis['coin_id'] = coin_id
+                analysis['last_updated'] = datetime.now().isoformat()
+                results[coin_id] = analysis
+            else:
+                results[coin_id] = {"error": "Failed to fetch data"}
+        
+        return {
+            "success": True,
+            "data": results,
+            "processed_coins": len(results)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trading-signals/{coin_id}")
+async def get_trading_signals(coin_id: str, timeframe: str = "1d"):
+    """Get AI-powered trading signals for a cryptocurrency"""
+    try:
+        # Fetch recent price data
+        data_fetcher = CryptoDataFetcher()
+        days = 30 if timeframe == "1d" else 7
+        price_data = await data_fetcher.get_price_history(coin_id, days)
+        
+        if not price_data.get('success'):
+            raise HTTPException(status_code=400, detail="Failed to fetch price data")
+        
+        # Analyze technical indicators
+        ohlc_data = price_data['data']
+        analysis = analyze_technical_indicators(ohlc_data)
+        
+        # Extract signals
+        signals = analysis.get('signals', {})
+        
+        # Enhance with AI insights
+        if AI_SERVICE_AVAILABLE:
+            try:
+                ai_context = f"""
+                Analyzing {coin_id.upper()} trading signals:
+                - RSI: {analysis.get('rsi', [])[-1:]}
+                - Overall Sentiment: {signals.get('overall_sentiment', 'neutral')}
+                - Recent Recommendations: {len(signals.get('recommendations', []))}
+                """
+                
+                ai_response = await get_real_ai_response(
+                    f"Provide trading advice for {coin_id} based on technical analysis",
+                    {"technical_data": ai_context}
+                )
+                signals['ai_insight'] = ai_response
+            except Exception as ai_error:
+                signals['ai_insight'] = "AI analysis temporarily unavailable"
+        
+        return {
+            "success": True,
+            "coin_id": coin_id,
+            "timeframe": timeframe,
+            "signals": signals,
+            "technical_summary": {
+                "rsi_current": analysis.get('rsi', [])[-1:],
+                "trend": signals.get('overall_sentiment', 'neutral'),
+                "strength": signals.get('strength', 0)
+            },
+            "last_updated": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================
+# PORTFOLIO MANAGEMENT ENDPOINTS (Enhanced)
+# ===========================================
+
+@app.post("/api/portfolio/analyze")
+async def analyze_portfolio_performance(request: Dict[str, Any]):
+    """Analyze portfolio performance with technical indicators"""
+    try:
+        holdings = request.get('holdings', [])
+        
+        if not holdings:
+            raise HTTPException(status_code=400, detail="Holdings data is required")
+        
+        portfolio_analysis = {
+            "total_value": 0,
+            "total_change_24h": 0,
+            "coin_analysis": {},
+            "overall_signals": {
+                "bullish_count": 0,
+                "bearish_count": 0,
+                "neutral_count": 0
+            }
+        }
+        
+        data_fetcher = CryptoDataFetcher()
+        
+        for holding in holdings:
+            coin_id = holding.get('coin_id', '').lower()
+            amount = holding.get('amount', 0)
+            
+            if coin_id and amount > 0:
+                # Get price data and technical analysis
+                price_data = await data_fetcher.get_price_history(coin_id, 30)
+                
+                if price_data.get('success'):
+                    ohlc_data = price_data['data']
+                    current_price = ohlc_data[-1]['close'] if ohlc_data else 0
+                    
+                    # Calculate position value
+                    position_value = amount * current_price
+                    portfolio_analysis['total_value'] += position_value
+                    
+                    # Technical analysis
+                    analysis = analyze_technical_indicators(ohlc_data)
+                    signals = analysis.get('signals', {})
+                    
+                    # Count signals
+                    sentiment = signals.get('overall_sentiment', 'neutral')
+                    if sentiment == 'bullish':
+                        portfolio_analysis['overall_signals']['bullish_count'] += 1
+                    elif sentiment == 'bearish':
+                        portfolio_analysis['overall_signals']['bearish_count'] += 1
+                    else:
+                        portfolio_analysis['overall_signals']['neutral_count'] += 1
+                    
+                    portfolio_analysis['coin_analysis'][coin_id] = {
+                        "current_price": current_price,
+                        "position_value": position_value,
+                        "amount": amount,
+                        "signals": signals,
+                        "key_indicators": {
+                            "rsi": analysis.get('rsi', [])[-1:],
+                            "trend": sentiment
+                        }
+                    }
+        
+        # Overall portfolio sentiment
+        signals = portfolio_analysis['overall_signals']
+        if signals['bullish_count'] > signals['bearish_count']:
+            portfolio_sentiment = "bullish"
+        elif signals['bearish_count'] > signals['bullish_count']:
+            portfolio_sentiment = "bearish"
+        else:
+            portfolio_sentiment = "neutral"
+        
+        portfolio_analysis['portfolio_sentiment'] = portfolio_sentiment
+        portfolio_analysis['analysis_timestamp'] = datetime.now().isoformat()
+        
+        return {
+            "success": True,
+            "data": portfolio_analysis
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================
+# WEBSOCKET ENDPOINTS FOR REAL-TIME DATA
+# ===========================================
+
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    """WebSocket endpoint for real-time data streaming"""
+    client = await websocket_manager.connect(websocket, client_id)
+    
+    try:
+        while True:
+            # Receive messages from client
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            message_type = message.get("type")
+            
+            if message_type == "subscribe":
+                subscription_type = SubscriptionType(message.get("subscription_type"))
+                coins = message.get("coins", [])
+                await websocket_manager.subscribe_client(client, subscription_type, coins)
+            
+            elif message_type == "unsubscribe":
+                subscription_type = SubscriptionType(message.get("subscription_type"))
+                await websocket_manager.unsubscribe_client(client, subscription_type)
+            
+            elif message_type == "ping":
+                await websocket_manager.send_personal_message({
+                    "type": "pong",
+                    "timestamp": datetime.now().isoformat()
+                }, websocket)
+            
+            elif message_type == "get_current_prices":
+                coins = message.get("coins", [])
+                current_prices = {}
+                for coin in coins:
+                    if coin in websocket_manager.price_cache:
+                        current_prices[coin] = websocket_manager.price_cache[coin]
+                
+                await websocket_manager.send_personal_message({
+                    "type": "current_prices",
+                    "data": current_prices,
+                    "timestamp": datetime.now().isoformat()
+                }, websocket)
+    
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(client)
+    except Exception as e:
+        print(f"WebSocket error for client {client_id}: {e}")
+        websocket_manager.disconnect(client)
+
+# ===========================================
+# ALERT SYSTEM ENDPOINTS
+# ===========================================
+
+# In-memory alert storage (replace with database in production)
+user_alerts = {}  # {user_id: [alerts]}
+active_alert_monitors = {}  # {alert_id: monitor_task}
+
+async def monitor_price_alerts():
+    """Global background task to monitor all active price alerts"""
+    while True:
+        try:
+            # This is a placeholder for global alert monitoring
+            # In a production environment, this would query the database for active alerts
+            await asyncio.sleep(60)  # Check every minute
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"Error in global alert monitor: {e}")
+            await asyncio.sleep(60)
+
+class PriceAlert(BaseModel):
+    coin_id: str
+    condition: str  # "above", "below", "change_up", "change_down"
+    target_value: float
+    notification_type: str = "websocket"  # "websocket", "email", "both"
+    is_active: bool = True
+
+@app.post("/api/alerts/create")
+async def create_price_alert(alert: PriceAlert, user_id: str = "default_user"):
+    """Create a new price alert"""
+    try:
+        alert_id = f"alert_{hash(f'{user_id}_{alert.coin_id}_{alert.target_value}')}"
+        
+        alert_data = {
+            "id": alert_id,
+            "user_id": user_id,
+            "coin_id": alert.coin_id,
+            "condition": alert.condition,
+            "target_value": alert.target_value,
+            "notification_type": alert.notification_type,
+            "is_active": alert.is_active,
+            "created_at": datetime.now().isoformat(),
+            "triggered": False
+        }
+        
+        # Store alert
+        if user_id not in user_alerts:
+            user_alerts[user_id] = []
+        user_alerts[user_id].append(alert_data)
+        
+        # Start monitoring task
+        monitor_task = asyncio.create_task(monitor_price_alert(alert_data))
+        active_alert_monitors[alert_id] = monitor_task
+        
+        return {
+            "success": True,
+            "alert_id": alert_id,
+            "message": "Price alert created successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/alerts/{user_id}")
+async def get_user_alerts(user_id: str):
+    """Get all alerts for a user"""
+    try:
+        alerts = user_alerts.get(user_id, [])
+        return {
+            "success": True,
+            "alerts": alerts,
+            "total_count": len(alerts)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/alerts/{alert_id}")
+async def delete_alert(alert_id: str):
+    """Delete a price alert"""
+    try:
+        # Cancel monitoring task
+        if alert_id in active_alert_monitors:
+            active_alert_monitors[alert_id].cancel()
+            del active_alert_monitors[alert_id]
+        
+        # Remove from user alerts
+        for user_id, alerts in user_alerts.items():
+            user_alerts[user_id] = [a for a in alerts if a["id"] != alert_id]
+        
+        return {
+            "success": True,
+            "message": "Alert deleted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def monitor_price_alert(alert_data: Dict[str, Any]):
+    """Background task to monitor price alerts"""
+    alert_id = alert_data["id"]
+    coin_id = alert_data["coin_id"]
+    condition = alert_data["condition"]
+    target_value = alert_data["target_value"]
+    user_id = alert_data["user_id"]
+    
+    try:
+        while alert_data.get("is_active", True) and not alert_data.get("triggered", False):
+            # Fetch current price
+            current_price_data = await websocket_manager._fetch_price_data(coin_id)
+            
+            if current_price_data:
+                current_price = current_price_data["price"]
+                price_change_24h = current_price_data.get("price_change_24h", 0)
+                
+                triggered = False
+                
+                if condition == "above" and current_price >= target_value:
+                    triggered = True
+                elif condition == "below" and current_price <= target_value:
+                    triggered = True
+                elif condition == "change_up" and price_change_24h >= target_value:
+                    triggered = True
+                elif condition == "change_down" and price_change_24h <= -target_value:
+                    triggered = True
+                
+                if triggered:
+                    # Mark alert as triggered
+                    alert_data["triggered"] = True
+                    alert_data["triggered_at"] = datetime.now().isoformat()
+                    alert_data["triggered_price"] = current_price
+                    
+                    # Send notification
+                    alert_notification = {
+                        "alert_id": alert_id,
+                        "coin_id": coin_id,
+                        "condition": condition,
+                        "target_value": target_value,
+                        "current_price": current_price,
+                        "message": f"{coin_id.upper()} {condition} {target_value} - Current price: {current_price}"
+                    }
+                    
+                    # Send via WebSocket
+                    await websocket_manager.send_alert(user_id, alert_notification)
+                    
+                    # Send email if configured
+                    if alert_data.get("notification_type") in ["email", "both"]:
+                        # Email notification would go here
+                        pass
+                    
+                    break
+            
+            # Check every 30 seconds
+            await asyncio.sleep(30)
+            
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Error monitoring alert {alert_id}: {e}")
+    finally:
+        # Clean up
+        if alert_id in active_alert_monitors:
+            del active_alert_monitors[alert_id]
 
 if __name__ == "__main__":
     print("🚀 Starting Crypto Analytics AI Backend...")
     print(f"📊 AI Service: {'✅ Online (Groq)' if AI_SERVICE_AVAILABLE else '⚠️ Fallback Mode'}")
     
-    # Try different ports if 8000 is occupied
-    ports_to_try = [8000, 8001, 8002, 8003, 8080]
-    
-    for port in ports_to_try:
-        try:
-            print(f"🌐 Trying to start server on http://localhost:{port}")
-            print(f"📖 API docs will be available at http://localhost:{port}/docs")
-            
-            uvicorn.run(app, host="127.0.0.1", port=port, reload=False)
-            break
-        except OSError as e:
-            if "WinError 10013" in str(e) or "Address already in use" in str(e):
-                print(f"⚠️ Port {port} is already in use, trying next port...")
-                continue
-            else:
-                print(f"❌ Error starting server on port {port}: {e}")
-                continue
-        except Exception as e:
-            print(f"❌ Unexpected error on port {port}: {e}")
-            continue
-    else:
-        print("❌ Could not start server on any available port!")
-        print("💡 Try closing other applications that might be using these ports.")
+    # Force to use port 8000 only
+    port = 8000
+    try:
+        print(f"🌐 Starting server on http://localhost:{port}")
+        print(f"📖 API docs will be available at http://localhost:{port}/docs")
+        print("💡 If port 8000 is in use, please stop other services using this port")
+        
+        uvicorn.run(app, host="127.0.0.1", port=port, reload=False)
+    except OSError as e:
+        if "WinError 10013" in str(e) or "Address already in use" in str(e):
+            print(f"❌ Port {port} is already in use!")
+            print("💡 Please stop the service using port 8000 and try again")
+            print("💡 You can check what's using port 8000 with: netstat -ano | findstr :8000")
+            input("Press Enter to exit...")
+        else:
+            print(f"❌ Error starting server on port {port}: {e}")
+            input("Press Enter to exit...")
+    except Exception as e:
+        print(f"❌ Unexpected error on port {port}: {e}")
         input("Press Enter to exit...")

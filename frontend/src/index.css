@@ -78,6 +78,8 @@ code {
 /* Custom components */
 .card {
   @apply bg-slate-800 rounded-lg shadow-lg border border-slate-700 p-6;
+  min-height: fit-content;
+  height: auto;
 }
 
 .btn-primary {

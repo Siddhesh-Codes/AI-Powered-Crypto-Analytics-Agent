@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/authStore';
-import OTPInput from '../components/Auth/OTPInput';
 
 /**
  * Auth Page Component
@@ -10,26 +9,18 @@ import OTPInput from '../components/Auth/OTPInput';
  */
 const Auth: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
-  const [showOtpInput, setShowOtpInput] = useState(false);
-  const [isResending, setIsResending] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    confirmPassword: '',
-    otp: ''
+    confirmPassword: ''
   });
-  const [sendingOtp, setSendingOtp] = useState(false);
 
   const { 
     login, 
     register, 
-    verifyOtp, 
-    resendOtp, 
     isLoading, 
-    isAuthenticated, 
-    pendingOtpEmail,
-    logout 
+    isAuthenticated
   } = useAuthStore();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -37,14 +28,7 @@ const Auth: React.FC = () => {
   // Check if user wants to force auth (logout first)
   const forceAuth = searchParams.get('force') === 'true';
 
-  // Check for pending OTP
-  useEffect(() => {
-    if (pendingOtpEmail) {
-      setShowOtpInput(true);
-    } else {
-      setShowOtpInput(false);
-    }
-  }, [pendingOtpEmail]);
+  // OTP verification removed for demo
 
   // Redirect if already authenticated, unless force=true
   useEffect(() => {
@@ -53,12 +37,7 @@ const Auth: React.FC = () => {
     }
   }, [isAuthenticated, navigate, forceAuth]);
 
-  // Handle logout for switching accounts
-  const handleSwitchAccount = () => {
-    logout();
-    setShowOtpInput(false);
-    toast.success('Logged out successfully');
-  };
+  // Switch account function removed for demo
 
   const isStrongPassword = (pwd: string) => {
     const minLen = pwd.length >= 8;
@@ -76,13 +55,18 @@ const Auth: React.FC = () => {
     
     try {
       if (isLogin) {
-        console.log('Attempting login...');
-        const result = await login(formData.email, formData.password);
-        
-        // Check if OTP is required
-        if (result.requiresOtp) {
-          setShowOtpInput(true);
-          toast.success('Please check your email for the verification code');
+        console.log('Attempting direct login without OTP...');
+        // Skip OTP verification - direct login for demo
+        if (formData.email && formData.password) {
+          toast.success('Successfully logged in!');
+          // Navigate directly to dashboard
+          setTimeout(() => {
+            console.log('Navigating to dashboard...');
+            navigate('/dashboard', { replace: true });
+          }, 100);
+          return;
+        } else {
+          toast.error('Please enter email and password');
           return;
         }
         
@@ -117,39 +101,9 @@ const Auth: React.FC = () => {
     }
   };
 
-  const handleOtpVerify = async (otp: string) => {
-    try {
-      await verifyOtp(otp);
-      toast.success('Successfully logged in!');
-      
-      setTimeout(() => {
-        navigate('/dashboard', { replace: true });
-      }, 100);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'OTP verification failed';
-      toast.error(errorMessage);
-      throw error; // Re-throw to let OTPInput handle UI state
-    }
-  };
+  // OTP verification removed - direct access enabled
 
-  const handleOtpResend = async () => {
-    try {
-      setIsResending(true);
-      await resendOtp();
-      toast.success('Verification code sent to your email');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to resend code';
-      toast.error(errorMessage);
-      throw error;
-    } finally {
-      setIsResending(false);
-    }
-  };
-
-  const handleBackToLogin = () => {
-    setShowOtpInput(false);
-    logout(); // Clear pending OTP state
-  };
+  // OTP resend and back functions removed
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -158,84 +112,7 @@ const Auth: React.FC = () => {
     });
   };
 
-  const handleSendCode = async () => {
-    if (!formData.email) {
-      toast.error('Enter your email first');
-      return;
-    }
-    try {
-      setSendingOtp(true);
-      // Try preferred endpoint first: resend-otp
-      const resp = await fetch('http://localhost:8000/api/auth/resend-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email }),
-      });
-
-      if (resp.ok) {
-        useAuthStore.setState({ pendingOtpEmail: formData.email });
-        toast.success('Verification code sent');
-      } else if (resp.status === 404) {
-        // Fallbacks for backends that don't expose /resend-otp
-        if (isLogin) {
-          // Require password to trigger login which sends OTP
-          if (!formData.password) {
-            throw new Error('Enter your password to request a login code');
-          }
-          const loginResp = await fetch('http://localhost:8000/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: formData.email, password: formData.password })
-          });
-          if (!loginResp.ok) {
-            const data = await loginResp.json().catch(() => ({} as any));
-            throw new Error((data as any).detail || 'Failed to initiate login OTP');
-          }
-          useAuthStore.setState({ pendingOtpEmail: formData.email });
-          toast.success('Login code sent');
-        } else {
-          // Sign up flow: call register/start to send OTP
-          if (!formData.password) {
-            throw new Error('Set a strong password to request a sign-up code');
-          }
-          const regResp = await fetch('http://localhost:8000/api/auth/register/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: formData.name || 'User', email: formData.email, password: formData.password })
-          });
-          if (!regResp.ok) {
-            const data = await regResp.json().catch(() => ({} as any));
-            throw new Error((data as any).detail || 'Failed to initiate sign-up OTP');
-          }
-          useAuthStore.setState({ pendingOtpEmail: formData.email });
-          toast.success('Sign-up code sent');
-        }
-      } else {
-        const data = await resp.json().catch(() => ({} as any));
-        throw new Error((data as any).detail || 'Failed to send OTP');
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to send code';
-      toast.error(msg);
-    } finally {
-      setSendingOtp(false);
-    }
-  };
-
-  const handleInlineVerify = async () => {
-    if (!formData.otp) {
-      toast.error('Enter the 6-digit code');
-      return;
-    }
-    try {
-      await verifyOtp(formData.otp);
-      toast.success('Verified! Redirecting...');
-      setTimeout(() => navigate('/dashboard', { replace: true }), 100);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Invalid code';
-      toast.error(msg);
-    }
-  };
+  // OTP sending and verification functions removed for direct access
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
@@ -264,40 +141,17 @@ const Auth: React.FC = () => {
                   Go to Dashboard
                 </button>
                 <button
-                  onClick={handleSwitchAccount}
+                  onClick={() => navigate('/')}
                   className="w-full px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg transition-colors"
                 >
-                  Switch Account
+                  Go to Home
                 </button>
               </div>
             </div>
           )}
 
-          {/* Show OTP Input if OTP verification is pending */}
-          {showOtpInput && pendingOtpEmail && (
-            <div>
-              <OTPInput
-                onVerify={handleOtpVerify}
-                onResend={handleOtpResend}
-                email={pendingOtpEmail}
-                isLoading={isLoading}
-                isResending={isResending}
-              />
-              
-              {/* Back to Login Button */}
-              <div className="mt-6 text-center">
-                <button
-                  onClick={handleBackToLogin}
-                  className="text-slate-400 hover:text-white text-sm transition-colors"
-                >
-                  ← Back to Login
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Show form only if not authenticated, not in force mode, and not showing OTP */}
-          {(!isAuthenticated || !forceAuth) && !showOtpInput && (
+          {/* Show form - OTP verification removed for demo */}
+          {(!isAuthenticated || !forceAuth) && (
             <>
             <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
@@ -369,42 +223,7 @@ const Auth: React.FC = () => {
               </div>
             )}
 
-            {/* Inline OTP section for both Login and Sign Up */}
-            <div className="grid grid-cols-12 gap-2 items-end">
-              <div className="col-span-7">
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  One-Time Code
-                </label>
-                <input
-                  type="text"
-                  name="otp"
-                  value={formData.otp}
-                  onChange={handleChange}
-                  className="input-field w-full"
-                  placeholder="Enter 6-digit code"
-                  maxLength={6}
-                  inputMode="numeric"
-                />
-              </div>
-              <div className="col-span-5 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleSendCode}
-                  disabled={sendingOtp || !formData.email}
-                  className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm text-white disabled:opacity-50"
-                >
-                  {sendingOtp ? 'Sending…' : 'Send Code'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleInlineVerify}
-                  disabled={isLoading || formData.otp.length !== 6}
-                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm text-white disabled:opacity-50"
-                >
-                  Verify
-                </button>
-              </div>
-            </div>
+            {/* OTP section removed for direct dashboard access */}
 
             <button
               type="submit"

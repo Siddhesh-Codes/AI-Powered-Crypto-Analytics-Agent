@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, Bell, User, LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../../store/authStore';
+import { useAuth } from '../../contexts/AuthContext';
 import { useMarketStore } from '../../store/marketStore';
 import toast from 'react-hot-toast';
 
@@ -24,7 +24,7 @@ const Header: React.FC = () => {
   const notificationRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   
-  const { user, logout } = useAuthStore();
+  const { user, logout } = useAuth();
   const { topCryptos, searchCryptos } = useMarketStore();
   const navigate = useNavigate();
 
@@ -128,8 +128,27 @@ const Header: React.FC = () => {
     ));
   };
 
-  const getUserInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  const getUserInitials = (name: string | undefined) => {
+    // Try to get initials from name
+    if (name && typeof name === 'string' && name.trim() !== '') {
+      try {
+        return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+      } catch (error) {
+        console.error('Error generating initials from name:', error);
+      }
+    }
+    
+    // Fallback to email initials
+    if (user?.email && typeof user.email === 'string') {
+      try {
+        return user.email.substring(0, 2).toUpperCase();
+      } catch (error) {
+        console.error('Error generating initials from email:', error);
+      }
+    }
+    
+    // Final fallback
+    return 'U';
   };
 
   return (
@@ -240,11 +259,11 @@ const Header: React.FC = () => {
             >
               <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
                 <span className="text-sm font-semibold text-white">
-                  {user ? getUserInitials(user.name) : 'U'}
+                  {getUserInitials(user?.name)}
                 </span>
               </div>
               <div className="text-sm text-left">
-                <p className="text-white font-medium">{user?.name || 'User'}</p>
+                <p className="text-white font-medium">{user?.name || user?.username || user?.email || 'User'}</p>
                 <p className="text-slate-400">Free Plan</p>
               </div>
             </button>
@@ -253,7 +272,7 @@ const Header: React.FC = () => {
             {showUserMenu && (
               <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50">
                 <div className="p-3 border-b border-slate-700">
-                  <p className="text-white font-medium">{user?.name}</p>
+                  <p className="text-white font-medium">{user?.name || user?.username || 'User'}</p>
                   <p className="text-slate-400 text-sm">{user?.email}</p>
                 </div>
                 <div className="py-2">

@@ -7,7 +7,7 @@ import { CompactCryptoList } from '../components/Crypto/CryptoTable';
 import { TradingViewMiniWidget } from '../components/TradingView/TradingViewWidget';
 import AlertsManager from '../components/Alerts/AlertsManager';
 import TradingSignals from '../components/Trading/TradingSignals';
-import NewsAndSentiment from '../components/News/NewsAndSentiment';
+import NewsAndSentiment from '../components/News';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 

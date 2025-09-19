@@ -10,8 +10,10 @@ sqlalchemy==2.0.23
 
 # AI/ML dependencies
 groq==0.4.1
-numpy==1.24.3
-pandas==2.0.3
+numpy==2.3.3
+pandas==2.3.2
+textblob==0.17.1
+aiohttp==3.9.1
 
 # Email and communication
 email-validator==2.1.0

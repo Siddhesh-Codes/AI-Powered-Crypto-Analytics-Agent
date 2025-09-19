@@ -1,9 +1,0 @@
-# Additional packages for OTP system
-smtplib  # Built-in Python, for email sending
-email    # Built-in Python, for email formatting
-secrets  # Built-in Python, for secure random generation
-hashlib  # Built-in Python, for hashing
-datetime # Built-in Python, for time handling
-
-# If you want to add database persistence later:
-# sqlite3  # Built-in Python, for local database
