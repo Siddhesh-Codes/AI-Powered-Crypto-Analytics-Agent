@@ -1,17 +1,7 @@
 # 🚀 AI-Powered Crypto Analytics Application
 
 [![React](https://img.shields.io/badge/React-18.2.0-61DAFB?style=flat&logo=react)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/Typ│   │   │   ├── 📁 AI/           # AI chat components
-│   │   │   ├── 📁 Auth/         # Authentication components
-│   │   │   ├── 📁 Charts/       # Chart visualization components
-│   │   │   ├── 📁 Crypto/       # Cryptocurrency data components
-│   │   │   ├── 📁 Layout/       # Layout and navigation components
-│   │   │   ├── 📁 News/         # News components (basic)
-│   │   │   └── 📁 Trading/      # Trading components (basic)
-│   │   ├── 📁 pages/            # Main application pages
-│   │   ├── 📁 services/         # API service layers
-│   │   ├── 📁 contexts/         # React context providers
-│   │   └── 📁 store/            # State management-3178C6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.9.5-3178C6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python)](https://www.python.org/)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
