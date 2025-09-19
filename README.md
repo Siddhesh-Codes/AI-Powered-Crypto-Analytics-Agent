@@ -1,70 +1,74 @@
 # 🚀 AI-Powered Crypto Analytics Application
 
 [![React](https://img.shields.io/badge/React-18.2.0-61DAFB?style=flat&logo=react)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-4.9.5-3178C6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/Typ│   │   │   ├── 📁 AI/           # AI chat components
+│   │   │   ├── 📁 Auth/         # Authentication components
+│   │   │   ├── 📁 Charts/       # Chart visualization components
+│   │   │   ├── 📁 Crypto/       # Cryptocurrency data components
+│   │   │   ├── 📁 Layout/       # Layout and navigation components
+│   │   │   ├── 📁 News/         # News components (basic)
+│   │   │   └── 📁 Trading/      # Trading components (basic)
+│   │   ├── 📁 pages/            # Main application pages
+│   │   ├── 📁 services/         # API service layers
+│   │   ├── 📁 contexts/         # React context providers
+│   │   └── 📁 store/            # State management-3178C6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python)](https://www.python.org/)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 
-A comprehensive full-stack cryptocurrency analytics application with **AI-powered forecasting capabilities**, **real-time market analysis**, and **intelligent trading signals**. Built as a Final Year Project showcasing modern web development, machine learning, and financial technology integration.
+A full-stack cryptocurrency analytics application with **AI chat capabilities**, **real-time market data**, and **technical analysis**. Built as a Final Year Project showcasing modern web development and AI integration with cryptocurrency markets.
 
 ## ✨ Key Features
 
-### 🤖 **AI-Powered Analytics**
-- **Multi-Model Forecasting**: LSTM, ARIMA, and Transformer models for price prediction
-- **Intelligent Chat Assistant**: Powered by Groq API for market insights and Q&A
-- **Technical Analysis**: RSI, MACD, Bollinger Bands, and custom indicators
-- **Market Sentiment Analysis**: Real-time sentiment from news and social media
+### 🤖 **AI-Powered Features**
+- **AI Chat Assistant**: Powered by Groq API for cryptocurrency market insights and Q&A
+- **Technical Analysis**: RSI, MACD, Bollinger Bands, and other technical indicators
+- **Price Prediction Models**: LSTM and ARIMA models for forecasting (development stage)
+- **Market Sentiment Analysis**: News sentiment analysis capabilities
 
-### 📊 **Real-Time Trading Tools**
-- **Live Price Monitoring**: Real-time cryptocurrency price tracking
-- **Trading Signals**: AI-generated buy/sell recommendations
-- **Risk Assessment**: Portfolio risk analysis and management
-- **Custom Alerts**: Price alerts and notification system
+### 📊 **Market Data & Analytics**
+- **Live Price Monitoring**: Real-time cryptocurrency price tracking via CoinMarketCap API
+- **Interactive Charts**: Price visualization with Chart.js
+- **Technical Indicators**: Advanced technical analysis tools
+- **Market Overview**: Global cryptocurrency market metrics
 
 ### 🔐 **User Management**
-- **Secure Authentication**: JWT-based auth with OTP verification
-- **Portfolio Tracking**: Multi-currency portfolio management
-- **User Profiles**: Personalized settings and preferences
-- **Trading History**: Complete transaction and analysis history
+- **Secure Authentication**: JWT-based authentication system
+- **User Registration & Login**: Complete user account management
+- **Protected Routes**: Secure access to user-specific features
 
 ### 📱 **Modern UI/UX**
 - **Responsive Design**: Mobile-first approach with Tailwind CSS
-- **Interactive Charts**: Advanced charting with Chart.js and Recharts
+- **Interactive Components**: Modern React components with TypeScript
 - **Real-time Updates**: WebSocket integration for live data
-- **Dark/Light Themes**: Customizable user interface
+- **Professional Interface**: Clean and intuitive user experience
 
 ## 🛠️ Technology Stack
 
 ### **Frontend Architecture**
 - **React 18** with TypeScript for type-safe development
 - **Tailwind CSS** for modern, responsive styling
-- **Chart.js & Recharts** for advanced data visualizations
-- **Zustand** for efficient state management
-- **React Query** for server state management
-- **Framer Motion** for smooth animations
+- **Chart.js** for data visualizations
 - **React Router** for client-side routing
+- **Axios** for API communication
+- **React Hot Toast** for notifications
 
 ### **Backend Infrastructure**
 - **FastAPI** for high-performance API development
-- **SQLAlchemy** for database ORM and migrations
-- **SQLite/PostgreSQL** for data persistence
+- **SQLite** for data persistence
 - **WebSocket** for real-time communication
-- **JWT & BCrypt** for secure authentication
+- **JWT** for secure authentication
 - **Uvicorn** as ASGI server
 
 ### **AI/ML & Data Processing**
-- **Groq API** for advanced language model capabilities
-- **TensorFlow/Keras** for LSTM neural networks
-- **Statsmodels** for ARIMA time series analysis
-- **NumPy & Pandas** for data manipulation
-- **TextBlob & NLTK** for sentiment analysis
-- **Technical Indicators** custom implementation
+- **Groq API** for AI chat capabilities
+- **TensorFlow/Keras** for LSTM neural networks (in development)
+- **Statsmodels** for ARIMA time series analysis (in development)
+- **Custom Technical Indicators** implementation
 
 ### **External APIs & Services**
 - **CoinMarketCap API** for cryptocurrency data
-- **News API** for market news and sentiment
-- **Email Services** for OTP and notifications
+- **News API** for market news (in development)
 - **WebSocket APIs** for real-time price feeds
 
 ## 🚀 Quick Start Guide
@@ -82,14 +86,14 @@ cd "AI Powered Crypto Application"
 ```
 
 ### **2. Quick Installation (Recommended)**
-Use the automated installation scripts:
+Use the provided batch scripts for Windows:
 
 ```bash
-# Install all dependencies for both frontend and backend
-npm run install:all
+# Start frontend development server
+start-frontend.bat
 
-# Start the complete development environment
-npm run dev
+# Start backend API server
+start-backend.bat
 ```
 
 ### **3. Manual Installation**
@@ -137,13 +141,8 @@ GROQ_API_KEY=your_groq_api_key_here
 COINMARKETCAP_API_KEY=your_coinmarketcap_api_key_here
 NEWS_API_KEY=your_news_api_key_here
 
-# 📧 Email Configuration for OTP
-GMAIL_USER=your_email@gmail.com
-GMAIL_APP_PASSWORD=your_gmail_app_password
-
-# 🗄️ Database Configuration
+# ️ Database Configuration
 DATABASE_URL=sqlite:///./crypto_analytics.db
-# For PostgreSQL: postgresql://username:password@localhost/dbname
 
 # 🔐 Security
 SECRET_KEY=your_secret_key_here
@@ -172,30 +171,30 @@ REACT_APP_COINMARKETCAP_API_KEY=your_public_api_key_here
 |---------|---------|-----------|--------------|
 | **Groq** | AI Chat Assistant | ✅ Yes | [groq.com](https://groq.com) |
 | **CoinMarketCap** | Crypto Data | ✅ 10,000 calls/month | [coinmarketcap.com/api](https://coinmarketcap.com/api/) |
-| **NewsAPI** | Market News | ✅ 1,000 requests/day | [newsapi.org](https://newsapi.org/) |
-| **Gmail App Password** | OTP Email | ✅ Free | [Google Account Settings](https://myaccount.google.com/apppasswords) |
+| **NewsAPI** | Market News (Future) | ✅ 1,000 requests/day | [newsapi.org](https://newsapi.org/) |
 
 ## �️ Application Usage
 
 ### **Development Mode**
 ```bash
-# Start both frontend and backend simultaneously
-npm run dev
+# Start frontend (port 3000)
+start-frontend.bat
+# OR
+cd frontend && npm start
 
-# Or start them separately:
-npm run dev:frontend  # Frontend only (port 3000)
-npm run dev:backend   # Backend only (port 8000)
+# Start backend (port 8000)
+start-backend.bat
+# OR
+cd backend && python simple_backend.py
 ```
 
 ### **Available Scripts**
 | Command | Description |
 |---------|-------------|
-| `npm run install:all` | Install dependencies for both frontend and backend |
-| `npm run dev` | Start both frontend and backend |
-| `npm run dev:frontend` | Start frontend development server |
-| `npm run dev:backend` | Start backend API server |
-| `npm run build:frontend` | Build frontend for production |
-| `npm test` | Run all tests |
+| `start-frontend.bat` | Start frontend development server |
+| `start-backend.bat` | Start backend API server |
+| `cd frontend && npm start` | Start frontend manually |
+| `cd backend && python simple_backend.py` | Start backend manually |
 
 ### **Access Points**
 - **Frontend Application**: [http://localhost:3000](http://localhost:3000)
@@ -226,55 +225,37 @@ AI Powered Crypto Application/
 │   └── 📄 package.json          # Frontend dependencies
 │
 ├── 📁 backend/                  # FastAPI Python Backend
-│   ├── 📁 app/                  # Application core
-│   │   ├── 📁 api/              # API routes and endpoints
-│   │   └── 📁 services/         # Business logic services
-│   ├── 📄 simple_backend.py     # Main application server
-│   ├── 📄 models.py             # Database models
-│   ├── 📄 database.py           # Database configuration
-│   ├── 📄 auth_utils.py         # Authentication utilities
+│   ├──  simple_backend.py     # Main application server
+│   ├── 📄 auth_database.py      # Authentication system
 │   ├── 📄 technical_indicators.py # Trading indicators
 │   ├── 📄 news_sentiment.py     # Sentiment analysis
+│   ├── 📄 websocket_manager.py  # WebSocket management
 │   └── 📄 requirements.txt      # Python dependencies
 │
-├── 📁 ai-models/                # AI/ML Model Implementations
+├── 📁 ai-models/                # AI/ML Model Implementations (Development)
 │   ├── 📁 lstm/                 # LSTM neural network models
 │   │   └── 📄 lstm_predictor.py
 │   └── 📁 arima/                # ARIMA time series models
 │       └── 📄 arima_predictor.py
 │
-├── 📄 package.json              # Root package.json for scripts
 ├── 📄 README.md                 # Project documentation
 ├── 📄 start-frontend.bat        # Windows batch scripts
 └── 📄 start-backend.bat         # for easy development
 ```
 
-## 🧪 AI/ML Model Training
+## 🧪 AI/ML Model Training (Development Stage)
 
-### **LSTM Price Prediction Model**
-```bash
-# Train LSTM model for cryptocurrency price forecasting
-python ai-models/lstm/lstm_predictor.py
+The AI/ML models are currently in development and can be found in the `ai-models/` directory:
 
-# Or use the task runner
-npm run train:lstm
-```
-
-### **ARIMA Time Series Model**
-```bash
-# Train ARIMA model for time series analysis
-python ai-models/arima/arima_predictor.py
-
-# Or use the task runner
-npm run train:arima
-```
-
-### **Model Features**
-- **LSTM Neural Networks**: Deep learning for complex pattern recognition
+### **Available Models**
+- **LSTM Neural Networks**: For deep learning-based price prediction
 - **ARIMA Models**: Statistical time series forecasting
-- **Technical Indicators**: RSI, MACD, Bollinger Bands integration
-- **Sentiment Analysis**: News and social media sentiment scoring
-- **Risk Assessment**: Portfolio risk calculation and optimization
+- **Technical Indicators**: RSI, MACD, Bollinger Bands implementation
+
+### **Current Implementation Status**
+- ✅ Model structure and classes implemented
+- ⚠️ Training pipelines under development
+- ⚠️ Integration with main application pending
 
 ## 🔒 Security & Best Practices
 
@@ -289,15 +270,12 @@ npm run train:arima
 .env.example
 ```
 
-### **Security Checklist**
+### **Security Features**
 - ✅ JWT token-based authentication
-- ✅ Password hashing with bcrypt
-- ✅ Rate limiting on API endpoints
-- ✅ Input validation and sanitization
+- ✅ Password hashing
 - ✅ CORS configuration
-- ✅ SQL injection prevention
-- ✅ XSS protection
-- ✅ Secure HTTP headers
+- ✅ Input validation and sanitization
+- ✅ Secure API endpoints
 
 ### **API Key Management**
 1. **Obtain API keys** from respective providers
@@ -308,18 +286,15 @@ npm run train:arima
 
 ## 🧪 Testing
 
-### **Run All Tests**
-```bash
-npm test                    # Run all tests
-npm run test:frontend      # Frontend tests only
-npm run test:backend       # Backend tests only
-```
+### **Current Testing Status**
+- ⚠️ Testing framework setup in progress
+- ✅ Manual API testing available via `/docs` endpoint
+- ✅ Frontend components tested manually
 
-### **Test Coverage**
+### **Planned Testing**
 - **Unit Tests**: Component and function testing
 - **Integration Tests**: API endpoint testing
 - **E2E Tests**: Full user flow testing
-- **AI Model Tests**: Model accuracy and performance
 
 ## 🚀 Deployment
 
@@ -338,31 +313,27 @@ npm run build:frontend
 - **Database**: PostgreSQL on Heroku, PlanetScale
 - **Static Assets**: Cloudinary, AWS S3
 
-## 📊 Features Showcase
+## 📊 Current Features
 
-### **Dashboard Analytics**
-- Real-time cryptocurrency price charts
-- Portfolio performance tracking
-- Market sentiment indicators
-- AI-powered trading signals
+### **Market Data Dashboard**
+- Real-time cryptocurrency price tracking
+- Market overview and global metrics
+- Interactive price charts
 
 ### **AI Chat Assistant**
 - Natural language crypto market queries
-- Intelligent analysis and recommendations
-- Historical data insights
-- Market trend explanations
+- Powered by Groq API
+- Market insights and analysis
 
-### **Portfolio Management**
-- Multi-currency portfolio tracking
-- Profit/loss calculations
-- Risk assessment metrics
-- Performance analytics
+### **User Authentication**
+- Secure user registration and login
+- JWT-based authentication
+- Protected user routes
 
-### **Advanced Trading Tools**
-- Technical indicator overlays
-- Custom alert systems
-- Automated trading signals
-- Risk management tools
+### **Technical Analysis**
+- Basic technical indicators
+- Price trend analysis
+- Market data visualization
 
 ## 🤝 Contributing
 
@@ -386,26 +357,23 @@ We welcome contributions! Please follow these steps:
 
 ### **Authentication Endpoints**
 ```http
-POST /auth/register        # User registration
-POST /auth/login          # User login
-POST /auth/verify-otp     # OTP verification
-POST /auth/logout         # User logout
+POST /api/auth/register   # User registration
+POST /api/auth/login      # User login
+POST /api/auth/logout     # User logout
+GET  /api/auth/me         # Get current user
 ```
 
 ### **Cryptocurrency Endpoints**
 ```http
-GET  /crypto/prices       # Get current prices
-GET  /crypto/history      # Get historical data
-GET  /crypto/predict      # Get AI predictions
-GET  /crypto/signals      # Get trading signals
+GET  /api/v1/crypto/global-metrics     # Global market data
+GET  /api/v1/crypto/top-cryptos        # Top cryptocurrencies
+GET  /api/market/data                  # Market data
 ```
 
-### **AI & Analytics Endpoints**
+### **AI & Chat Endpoints**
 ```http
-POST /ai/chat            # AI chat assistant
-GET  /ai/sentiment       # Market sentiment
-GET  /ai/forecast        # Price forecasting
-GET  /ai/analysis        # Technical analysis
+POST /api/v1/ai/chat     # AI chat assistant
+GET  /api/v1/ai/chat/health  # Chat service health
 ```
 
 ## 🔧 Troubleshooting
@@ -421,11 +389,13 @@ npx kill-port 8000
 
 **Module Not Found**
 ```bash
-# Reinstall dependencies
-rm -rf node_modules package-lock.json
+# For frontend
+cd frontend
+del /s node_modules package-lock.json
 npm install
 
 # For Python modules
+cd backend
 pip install -r requirements.txt --force-reinstall
 ```
 
