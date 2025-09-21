@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   TrendingUp, 
@@ -16,6 +16,35 @@ import {
  * Professional homepage introducing the AI-Powered Crypto Analytics platform
  */
 const LandingPage: React.FC = () => {
+  const [visibleElements, setVisibleElements] = useState<Set<string>>(new Set());
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setVisibleElements((prev) => new Set([...prev, entry.target.id]));
+          }
+        });
+      },
+      {
+        threshold: 0.1,
+        rootMargin: '0px 0px -50px 0px'
+      }
+    );
+
+    // Small delay to ensure DOM is fully rendered
+    const timer = setTimeout(() => {
+      const elements = document.querySelectorAll('[data-animate]');
+      elements.forEach((el) => observerRef.current?.observe(el));
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+      observerRef.current?.disconnect();
+    };
+  }, []);
   const features = [
     {
       icon: <Brain className="w-6 h-6" />,
@@ -49,15 +78,86 @@ const LandingPage: React.FC = () => {
     }
   ];
 
-  const stats = [
-    { number: "99.2%", label: "Prediction Accuracy" },
-    { number: "50K+", label: "Active Users" },
-    { number: "15+", label: "Supported Exchanges" },
-    { number: "24/7", label: "Market Monitoring" }
-  ];
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <style>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(50px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        @keyframes slideInLeft {
+          from {
+            opacity: 0;
+            transform: translateX(-50px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        
+        @keyframes slideInRight {
+          from {
+            opacity: 0;
+            transform: translateX(50px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        
+        @keyframes scaleIn {
+          from {
+            opacity: 0;
+            transform: scale(0.9);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        
+
+        
+        [data-animate] {
+          opacity: 0;
+          transition: all 0.6s ease-out;
+        }
+        
+        [data-animate].animate-fadeInUp {
+          animation: fadeInUp 0.8s ease-out forwards;
+        }
+        
+        [data-animate].animate-slideInLeft {
+          animation: slideInLeft 0.8s ease-out forwards;
+        }
+        
+        [data-animate].animate-slideInRight {
+          animation: slideInRight 0.8s ease-out forwards;
+        }
+        
+        [data-animate].animate-scaleIn {
+          animation: scaleIn 0.8s ease-out forwards;
+        }
+        
+
+        
+        .delay-100 { animation-delay: 0.1s; }
+        .delay-200 { animation-delay: 0.2s; }
+        .delay-300 { animation-delay: 0.3s; }
+        .delay-400 { animation-delay: 0.4s; }
+        .delay-500 { animation-delay: 0.5s; }
+      `}</style>
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 bg-slate-900/80 backdrop-blur-lg border-b border-slate-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -91,65 +191,74 @@ const LandingPage: React.FC = () => {
       <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           <div className="text-center">
-            <h1 className="text-4xl md:text-6xl font-bold text-white mb-6">
+            <h1 
+              id="hero-title" 
+              data-animate 
+              className={`text-4xl md:text-6xl font-bold text-white mb-6 ${visibleElements.has('hero-title') ? 'animate-fadeInUp' : ''}`}
+            >
               AI-Powered Crypto
               <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent block">
                 Analytics & Forecasting
               </span>
             </h1>
-            <p className="text-xl text-slate-300 mb-8 max-w-3xl mx-auto">
+            <p 
+              id="hero-desc" 
+              data-animate 
+              className={`text-xl text-slate-300 mb-8 max-w-3xl mx-auto delay-200 ${visibleElements.has('hero-desc') ? 'animate-fadeInUp' : ''}`}
+            >
               Make smarter investment decisions with our advanced AI models. Get real-time insights, 
-              accurate predictions, and comprehensive portfolio analysis all in one platform.
+              machine learning predictions, and comprehensive portfolio analysis all in one platform.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <div 
+              id="hero-buttons" 
+              data-animate 
+              className={`flex flex-col sm:flex-row gap-4 justify-center delay-400 ${visibleElements.has('hero-buttons') ? 'animate-fadeInUp' : ''}`}
+            >
               <Link 
                 to="/auth?force=true" 
                 className="inline-flex items-center px-8 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 transition-all duration-200 transform hover:scale-105"
               >
-                Start Free Trial
+                Get Started
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
-              <button className="inline-flex items-center px-8 py-3 border border-slate-600 text-base font-medium rounded-lg text-slate-300 hover:text-white hover:border-slate-500 transition-colors">
-                Watch Demo
+              <button className="inline-flex items-center px-8 py-3 border border-slate-600 text-base font-medium rounded-lg text-slate-300 hover:text-white hover:border-slate-500 transition-all duration-200 hover:scale-105">
+                Learn More
               </button>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-            {stats.map((stat, index) => (
-              <div key={index} className="text-center">
-                <div className="text-3xl md:text-4xl font-bold text-white mb-2">
-                  {stat.number}
-                </div>
-                <div className="text-slate-400 text-sm">
-                  {stat.label}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+
 
       {/* Features Section */}
       <section className="py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+            <h2 
+              id="features-title" 
+              data-animate 
+              className={`text-3xl md:text-4xl font-bold text-white mb-4 ${visibleElements.has('features-title') ? 'animate-fadeInUp' : ''}`}
+            >
               Powerful Features for Smart Trading
             </h2>
-            <p className="text-xl text-slate-300 max-w-2xl mx-auto">
+            <p 
+              id="features-desc" 
+              data-animate 
+              className={`text-xl text-slate-300 max-w-2xl mx-auto delay-200 ${visibleElements.has('features-desc') ? 'animate-fadeInUp' : ''}`}
+            >
               Everything you need to analyze, predict, and optimize your cryptocurrency investments
             </p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {features.map((feature, index) => (
-              <div key={index} className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700 hover:border-slate-600 transition-all duration-200 hover:transform hover:scale-105">
+              <div 
+                key={index} 
+                id={`feature-${index}`}
+                data-animate
+                className={`bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700 hover:border-slate-600 transition-all duration-300 hover:transform hover:scale-105 hover:shadow-xl hover:shadow-blue-500/20 delay-${(index + 1) * 100} ${visibleElements.has(`feature-${index}`) ? 'animate-scaleIn' : ''}`}
+              >
                 <div className="bg-gradient-to-r from-blue-500 to-purple-600 w-12 h-12 rounded-lg flex items-center justify-center text-white mb-4">
                   {feature.icon}
                 </div>
@@ -169,16 +278,28 @@ const LandingPage: React.FC = () => {
       <section className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-800/30">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+            <h2 
+              id="how-it-works-title" 
+              data-animate 
+              className={`text-3xl md:text-4xl font-bold text-white mb-4 ${visibleElements.has('how-it-works-title') ? 'animate-fadeInUp' : ''}`}
+            >
               How It Works
             </h2>
-            <p className="text-xl text-slate-300">
+            <p 
+              id="how-it-works-desc" 
+              data-animate 
+              className={`text-xl text-slate-300 delay-200 ${visibleElements.has('how-it-works-desc') ? 'animate-fadeInUp' : ''}`}
+            >
               Get started in just 3 simple steps
             </p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="text-center">
+            <div 
+              id="step-1" 
+              data-animate 
+              className={`text-center delay-100 ${visibleElements.has('step-1') ? 'animate-slideInLeft' : ''}`}
+            >
               <div className="bg-gradient-to-r from-blue-500 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold mb-4 mx-auto">
                 1
               </div>
@@ -190,7 +311,11 @@ const LandingPage: React.FC = () => {
               </p>
             </div>
             
-            <div className="text-center">
+            <div 
+              id="step-2" 
+              data-animate 
+              className={`text-center delay-300 ${visibleElements.has('step-2') ? 'animate-fadeInUp' : ''}`}
+            >
               <div className="bg-gradient-to-r from-blue-500 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold mb-4 mx-auto">
                 2
               </div>
@@ -202,7 +327,11 @@ const LandingPage: React.FC = () => {
               </p>
             </div>
             
-            <div className="text-center">
+            <div 
+              id="step-3" 
+              data-animate 
+              className={`text-center delay-500 ${visibleElements.has('step-3') ? 'animate-slideInRight' : ''}`}
+            >
               <div className="bg-gradient-to-r from-blue-500 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold mb-4 mx-auto">
                 3
               </div>
@@ -220,34 +349,38 @@ const LandingPage: React.FC = () => {
       {/* CTA Section */}
       <section className="py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="bg-gradient-to-r from-blue-500/10 to-purple-600/10 rounded-2xl p-8 border border-slate-700">
+          <div 
+            id="cta-section" 
+            data-animate 
+            className={`bg-gradient-to-r from-blue-500/10 to-purple-600/10 rounded-2xl p-8 border border-slate-700 transition-all duration-300 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/20 ${visibleElements.has('cta-section') ? 'animate-scaleIn' : ''}`}
+          >
             <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-              Ready to Supercharge Your Crypto Trading?
+              Ready to Transform Your Crypto Trading?
             </h2>
             <p className="text-xl text-slate-300 mb-8">
-              Join thousands of traders who are already using AI to maximize their returns
+              Experience the power of AI-driven cryptocurrency analytics and make informed investment decisions
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link 
                 to="/auth?force=true" 
                 className="inline-flex items-center px-8 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 transition-all duration-200 transform hover:scale-105"
               >
-                Start Your Free Trial
+                Get Started
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
             </div>
             <div className="mt-6 flex items-center justify-center space-x-6 text-sm text-slate-400">
               <div className="flex items-center">
                 <CheckCircle className="w-4 h-4 mr-1" />
-                No credit card required
+                Real-time market data
               </div>
               <div className="flex items-center">
                 <CheckCircle className="w-4 h-4 mr-1" />
-                14-day free trial
+                AI-powered analytics
               </div>
               <div className="flex items-center">
                 <CheckCircle className="w-4 h-4 mr-1" />
-                Cancel anytime
+                Portfolio management
               </div>
             </div>
           </div>
