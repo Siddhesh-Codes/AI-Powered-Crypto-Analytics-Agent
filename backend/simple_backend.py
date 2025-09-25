@@ -7,12 +7,13 @@ import uvicorn
 import os
 import asyncio
 import random
+import re
 import smtplib
 import secrets
 import hashlib
 import jwt
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from auth_database import auth_system, init_auth_database
@@ -21,6 +22,12 @@ from news_sentiment import news_client, sentiment_analyzer
 from websocket_manager import websocket_manager, SubscriptionType
 from fastapi import WebSocket, WebSocketDisconnect
 import aiohttp
+import time
+from typing import Optional
+
+# Price caching system
+PRICE_CACHE = {}
+CACHE_DURATION = 120  # 2 minutes cache
 
 # Load environment variables from .env file
 try:
@@ -210,6 +217,8 @@ async def fetch_crypto_price(crypto_id: str = "bitcoin") -> Dict[str, Any]:
     crypto_id examples: bitcoin, ethereum, binancecoin, cardano, solana, etc.
     """
     try:
+        # Get IST timezone
+        ist_timezone = timezone(timedelta(hours=5, minutes=30))
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
         
         async with aiohttp.ClientSession() as session:
@@ -223,7 +232,7 @@ async def fetch_crypto_price(crypto_id: str = "bitcoin") -> Dict[str, Any]:
                             "price": price_data.get("usd", 0),
                             "price_change_24h": price_data.get("usd_24h_change", 0),
                             "market_cap": price_data.get("usd_market_cap", 0),
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now(ist_timezone).isoformat()
                         }
                     else:
                         return {"success": False, "error": f"Cryptocurrency '{crypto_id}' not found"}
@@ -232,11 +241,78 @@ async def fetch_crypto_price(crypto_id: str = "bitcoin") -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": f"Failed to fetch price: {str(e)}"}
 
+async def get_live_crypto_price(crypto_symbol: str) -> Optional[Dict[str, Any]]:
+    """Get live crypto price from CoinGecko API with caching"""
+    
+    crypto_symbol = crypto_symbol.upper()
+    current_time = time.time()
+    
+    # Check cache first
+    if crypto_symbol in PRICE_CACHE:
+        cached_data, timestamp = PRICE_CACHE[crypto_symbol]
+        if current_time - timestamp < CACHE_DURATION:
+            print(f"✅ Using cached price for {crypto_symbol}: ${cached_data['price']:,.2f}")
+            return cached_data
+    
+    # Map symbols to CoinGecko IDs
+    symbol_to_id = {
+        'BTC': 'bitcoin',
+        'ETH': 'ethereum', 
+        'SOL': 'solana',
+        'ADA': 'cardano',
+        'MATIC': 'polygon',
+        'AVAX': 'avalanche-2',
+        'LINK': 'chainlink',
+        'XRP': 'ripple',
+        'DOT': 'polkadot',
+        'ATOM': 'cosmos'
+    }
+    
+    if crypto_symbol not in symbol_to_id:
+        print(f"❌ Unsupported crypto symbol: {crypto_symbol}")
+        return None
+    
+    crypto_id = symbol_to_id[crypto_symbol]
+    
+    try:
+        print(f"🔄 Fetching live price for {crypto_symbol} from CoinGecko...")
+        print(f"🔍 [DEBUG] Mapping {crypto_symbol} to {crypto_id}")
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.coingecko.com/api/v3/simple/price?ids={crypto_id}&vs_currencies=usd&include_24hr_change=true"
+            print(f"🔍 [DEBUG] API URL: {url}")
+            
+            async with session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    if crypto_id in data:
+                        price_data = {
+                            'symbol': crypto_symbol,
+                            'name': symbol_to_id[crypto_symbol].replace('-', ' ').title(),
+                            'price': data[crypto_id]['usd'],
+                            'change_24h': data[crypto_id].get('usd_24h_change', 0)
+                        }
+                        
+                        # Cache the result
+                        PRICE_CACHE[crypto_symbol] = (price_data, current_time)
+                        
+                        print(f"✅ Live price fetched for {crypto_symbol}: ${price_data['price']:,.2f}")
+                        return price_data
+                else:
+                    print(f"❌ CoinGecko API returned status {response.status}")
+                    
+    except Exception as e:
+        print(f"❌ Error fetching live price for {crypto_symbol}: {e}")
+    
+    return None
+
 async def get_multiple_crypto_prices(crypto_ids: List[str]) -> Dict[str, Any]:
     """
     Fetch prices for multiple cryptocurrencies at once
     """
     try:
+        # Get IST timezone
+        ist_timezone = timezone(timedelta(hours=5, minutes=30))
         ids_string = ",".join(crypto_ids)
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids_string}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
         
@@ -257,7 +333,7 @@ async def get_multiple_crypto_prices(crypto_ids: List[str]) -> Dict[str, Any]:
                     return {
                         "success": True,
                         "data": formatted_data,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now(ist_timezone).isoformat()
                     }
                 else:
                     return {"success": False, "error": f"API request failed with status {response.status}"}
@@ -265,17 +341,75 @@ async def get_multiple_crypto_prices(crypto_ids: List[str]) -> Dict[str, Any]:
         return {"success": False, "error": f"Failed to fetch prices: {str(e)}"}
 
 async def get_real_ai_response(user_message: str, context: Dict[str, Any] = {}) -> str:
-    """Get response from real AI service (Groq)"""
+    """Get response from Groq AI with LIVE price data integration for accuracy"""
     if not AI_SERVICE_AVAILABLE:
         raise Exception("AI service not available")
     
     try:
-        # Create crypto-focused system prompt
-        system_prompt = """You are an expert cryptocurrency analyst and trading advisor. 
-        You provide intelligent, data-driven insights about crypto markets, trading strategies, 
-        portfolio analysis, and blockchain technology. Always give practical, actionable advice 
-        while mentioning that this is not financial advice. Be concise but informative.
-        Use emojis and markdown formatting to make responses engaging."""
+        # Always detect crypto mentions first
+        crypto_mentions = detect_crypto_mentions(user_message)
+        print(f"🔍 [DEBUG] User message: '{user_message}'")
+        print(f"🔍 [DEBUG] Crypto mentions: {crypto_mentions}")
+        
+        # Fetch live price data for any mentioned cryptos
+        live_price_context = ""
+        if crypto_mentions:
+            print(f"🔍 [DEBUG] Fetching live prices for: {crypto_mentions}")
+            live_prices = []
+            
+            for crypto in crypto_mentions:
+                # Convert crypto name to symbol - FIXED VERSION
+                name_to_symbol = {
+                    'BITCOIN': 'BTC', 'ETHEREUM': 'ETH', 'SOLANA': 'SOL',
+                    'CARDANO': 'ADA', 'POLYGON': 'MATIC', 'POLKADOT': 'DOT',
+                    'CHAINLINK': 'LINK', 'COSMOS': 'ATOM', 'ALGORAND': 'ALGO',
+                    'UNISWAP': 'UNI'
+                }
+                
+                print(f"🔍 [DEBUG] Converting crypto: '{crypto}' -> symbol")
+                crypto_symbol = name_to_symbol.get(crypto, crypto)
+                print(f"🔍 [DEBUG] Final symbol: '{crypto_symbol}'")
+                
+                live_data = await get_live_crypto_price(crypto_symbol)
+                
+                if live_data:
+                    live_prices.append(f"{live_data['name']} ({crypto_symbol}): ${live_data['price']:,.2f} ({live_data['change_24h']:+.1f}% 24h)")
+                    print(f"✅ Live price fetched: {live_data['name']} = ${live_data['price']:,.2f}")
+            
+            if live_prices:
+                live_price_context = f"\n\nCURRENT LIVE MARKET PRICES (Use these EXACT prices - ignore any other price data):\n" + "\n".join(live_prices)
+                print(f"� [DEBUG] Live price context added: {len(live_prices)} cryptos")
+        
+        # Analyze question complexity to determine response length
+        complexity = analyze_question_complexity(user_message)
+        
+        # Create enhanced system prompt that FORCES use of live price data
+        base_system_prompt = """You are a professional cryptocurrency analyst with access to LIVE market data.
+
+CRITICAL INSTRUCTIONS:
+- ALWAYS use the EXACT live price data provided in the context when discussing ANY cryptocurrency prices
+- NEVER use outdated prices from your training data
+- If live price data is provided, that is the ONLY correct price - ignore all other price information
+- Provide accurate, current information based on the live data"""
+
+        if complexity == "simple":
+            system_prompt = base_system_prompt + """
+            
+Response style: Keep responses under 50 words. Be direct and professional. No emojis. No markdown formatting."""
+            max_tokens = 150
+        elif complexity == "medium":
+            system_prompt = base_system_prompt + """
+            
+Response style: Provide informative analysis in 2-3 sentences. Professional tone. No markdown formatting.
+Keep responses under 150 words. Be clear and structured."""
+            max_tokens = 200
+        else:  # complex
+            system_prompt = """You are an expert cryptocurrency analyst with access to live market data.
+            Always use the EXACT live price data provided in the context when discussing prices.
+            Provide comprehensive, data-driven insights about crypto markets, trading strategies, 
+            portfolio analysis, and blockchain technology. Give practical, actionable advice 
+            while mentioning this is not financial advice. Be thorough but well-structured. Use NO markdown."""
+            max_tokens = 400
         
         # Add context if available
         context_str = ""
@@ -286,9 +420,16 @@ async def get_real_ai_response(user_message: str, context: Dict[str, Any] = {}) 
         if context.get("top_cryptos"):
             context_str += f"Current top cryptos in portfolio: {[crypto.get('symbol', '') for crypto in context.get('top_cryptos', [])]}\n"
         
-        full_prompt = f"{system_prompt}\n\nUser context:\n{context_str}\n\nUser question: {user_message}"
+        # Combine context with live price data
+        final_context = context_str + live_price_context
         
-        # Call Groq API
+        # Create final prompt with live price data
+        full_prompt = f"{final_context}\n\nUser question: {user_message}"
+        
+        print(f"🔍 [DEBUG] Final context sent to AI:\n{final_context}")
+        print(f"🔍 [DEBUG] Full prompt length: {len(full_prompt)} chars")
+        
+        # Call Groq API with live price data
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
@@ -296,20 +437,29 @@ async def get_real_ai_response(user_message: str, context: Dict[str, Any] = {}) 
                 {"role": "user", "content": full_prompt}
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=max_tokens
         )
         
-        return completion.choices[0].message.content
+        ai_response = completion.choices[0].message.content.strip()
+        clean_response = clean_markdown_response(ai_response)
+        
+        print(f"✅ [SUCCESS] AI response generated with live price integration")
+        return clean_response
         
     except Exception as e:
-        print(f"Error calling Groq API: {e}")
-        raise e
+        print(f"❌ [ERROR] Groq API failed: {e}")
+        raise Exception(f"AI service error: {str(e)}")
 
 async def get_enhanced_fallback_response(user_message: str, context: Dict[str, Any] = {}) -> str:
-    """Dynamic AI that analyzes questions and generates intelligent responses"""
+    """Dynamic AI that analyzes questions and generates intelligent responses with smart length control"""
     await asyncio.sleep(0.8)  # Simulate AI thinking time
     
-    timestamp = datetime.now().strftime("%H:%M")
+    # Get IST time (UTC + 5:30)
+    ist_timezone = timezone(timedelta(hours=5, minutes=30))
+    timestamp = datetime.now(ist_timezone).strftime("%H:%M")
+    
+    # Analyze question complexity first
+    complexity = analyze_question_complexity(user_message)
     
     # Analyze the user's question intelligently
     analysis = analyze_user_question(user_message)
@@ -338,10 +488,170 @@ async def get_enhanced_fallback_response(user_message: str, context: Dict[str, A
             price_data = await get_multiple_crypto_prices(crypto_ids_to_fetch)
             real_time_data = price_data
     
-    # Generate dynamic response based on analysis
-    response = await generate_intelligent_response(user_message, analysis, timestamp, context, real_time_data)
+    # Generate dynamic response based on analysis and complexity
+    response = await generate_intelligent_response(user_message, analysis, timestamp, context, real_time_data, complexity)
     
-    return response
+    return clean_markdown_response(response)
+
+def analyze_question_simple(text: str) -> Dict[str, Any]:
+    """Simple analysis to detect question type"""
+    text_lower = text.lower()
+    
+    # Price query patterns
+    price_patterns = [
+        r'\b(price|cost|value|worth)\b',
+        r'\bhow\s+much\b',
+        r'\bcurrent\s+price\b',
+        r'\bwhat\s+(is|are)\s+.*(price|trading|worth)\b'
+    ]
+    
+    for pattern in price_patterns:
+        if re.search(pattern, text_lower):
+            return {"question_type": "price_query"}
+    
+    return {"question_type": "general"}
+
+def detect_crypto_mentions(text: str) -> List[str]:
+    """Detect cryptocurrency mentions in text and return in uppercase format"""
+    crypto_patterns = {
+        'BITCOIN': ['bitcoin', 'btc'],
+        'ETHEREUM': ['ethereum', 'eth', 'ether'],
+        'SOLANA': ['solana', 'sol'],
+        'CARDANO': ['cardano', 'ada'],
+        'POLKADOT': ['polkadot', 'dot'],
+        'POLYGON': ['polygon', 'matic'],
+        'CHAINLINK': ['chainlink', 'link'],
+        'UNISWAP': ['uniswap', 'uni'],
+        'COSMOS': ['cosmos', 'atom'],
+        'ALGORAND': ['algorand', 'algo'],
+    }
+    
+    text_lower = text.lower()
+    mentioned_cryptos = []
+    
+    for crypto_key, patterns in crypto_patterns.items():
+        for pattern in patterns:
+            if re.search(r'\b' + pattern + r'\b', text_lower):
+                mentioned_cryptos.append(crypto_key)
+                break
+    
+    return mentioned_cryptos
+
+def analyze_question_simple(question: str) -> Dict[str, Any]:
+    """Analyze question and return type information - FIXED VERSION"""
+    question_lower = question.lower()
+    
+    # Detect crypto mentions first
+    crypto_mentions = detect_crypto_mentions(question)
+    has_crypto = len(crypto_mentions) > 0
+    
+    # Detect if it's a price question
+    price_keywords = ['price', 'cost', 'value', 'worth', 'current', 'now', 'today']
+    explanation_keywords = ['what is', 'explain', 'tell me about', 'describe', 'about']
+    
+    is_price_question = any(keyword in question_lower for keyword in price_keywords)
+    is_explanation_question = any(keyword in question_lower for keyword in explanation_keywords)
+    
+    # CRITICAL FIX: If question mentions crypto AND is explanation/price, use live data path
+    if has_crypto and (is_price_question or is_explanation_question):
+        question_type = 'price_query'  # This forces live API usage
+        print(f"🔍 [DEBUG] FIXED: Crypto explanation detected - routing to live API path")
+    elif is_price_question:
+        question_type = 'price_query'
+    elif any(word in question_lower for word in ['analysis', 'trend', 'forecast']):
+        question_type = 'analysis'
+    else:
+        question_type = 'general'
+    
+    return {
+        'question_type': question_type,
+        'is_price_question': is_price_question or (has_crypto and is_explanation_question),
+        'complexity': 'simple' if (is_price_question or is_explanation_question) else 'medium'
+    }
+
+def analyze_question_complexity(question: str) -> str:
+    """Analyze question complexity to determine response length"""
+    question_lower = question.lower().strip()
+    word_count = len(question.split())
+    
+    # Simple questions (short, direct)
+    simple_patterns = [
+        'price', 'cost', 'worth', 'value', 'current price', 'price now',
+        'how much', 'what is', 'tell me', 'show me', 'give me'
+    ]
+    
+    # Complex questions (detailed analysis needed)
+    complex_patterns = [
+        'explain', 'analyze', 'compare', 'strategy', 'investment advice',
+        'portfolio', 'should i invest', 'risk assessment', 'technical analysis',
+        'market analysis', 'forecast', 'prediction', 'future', 'long term'
+    ]
+    
+    # Check for simple patterns and short questions
+    if word_count <= 5 or any(pattern in question_lower for pattern in simple_patterns):
+        # Exception: if it also contains complex terms, make it medium
+        if any(pattern in question_lower for pattern in complex_patterns):
+            return "medium"
+        return "simple"
+    
+    # Check for complex patterns
+    if any(pattern in question_lower for pattern in complex_patterns) or word_count > 15:
+        return "complex"
+    
+    # Default to medium complexity
+    return "medium"
+
+def clean_markdown_response(response: str) -> str:
+    """Clean ALL markdown formatting and return plain text"""
+    if not response:
+        return ""
+    
+    import re
+    
+    # Remove unwanted content patterns
+    lines = response.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        # Skip lines with fake portfolio data or unwanted content
+        if any(unwanted in line.lower() for unwanted in [
+            "['btc',", "[btc,", "'btc'", "'eth'", "'xrp'",
+            "btc, eth, xrp", "current portfolio", "your portfolio contains"
+        ]):
+            continue
+        
+        # Clean the line - remove ALL markdown formatting
+        cleaned_line = line.strip()
+        
+        # Remove ALL markdown formatting
+        # Remove bold (**text** and __text__)
+        cleaned_line = re.sub(r'\*\*(.*?)\*\*', r'\1', cleaned_line)
+        cleaned_line = re.sub(r'__(.*?)__', r'\1', cleaned_line)
+        
+        # Remove italic (*text* and _text_)
+        cleaned_line = re.sub(r'\*(.*?)\*', r'\1', cleaned_line)
+        cleaned_line = re.sub(r'_(.*?)_', r'\1', cleaned_line)
+        
+        # Remove headers (# ## ### etc)
+        cleaned_line = re.sub(r'^#+\s*', '', cleaned_line)
+        
+        # Remove bullet points and convert to simple dashes
+        cleaned_line = re.sub(r'^[\*\-\+]\s+', '- ', cleaned_line)
+        cleaned_line = re.sub(r'^•\s+', '- ', cleaned_line)
+        
+        # Remove any remaining standalone asterisks
+        cleaned_line = re.sub(r'\*', '', cleaned_line)
+        
+        if cleaned_line:
+            cleaned_lines.append(cleaned_line)
+    
+    # Join lines back
+    cleaned_response = '\n'.join(cleaned_lines)
+    
+    # Remove excessive newlines
+    cleaned_response = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_response)
+    
+    return cleaned_response.strip()
 
 def analyze_user_question(question: str) -> Dict[str, Any]:
     """Analyze user question to understand intent and topics"""
@@ -398,99 +708,266 @@ def analyze_user_question(question: str) -> Dict[str, Any]:
         "contains_numbers": any(char.isdigit() for char in question)
     }
 
-async def generate_intelligent_response(question: str, analysis: Dict[str, Any], timestamp: str, context: Dict[str, Any], real_time_data: Dict[str, Any] = {}) -> str:
-    """Generate contextual, intelligent response based on question analysis"""
+async def generate_intelligent_response(question: str, analysis: Dict[str, Any], timestamp: str, context: Dict[str, Any], real_time_data: Dict[str, Any] = {}, complexity: str = "medium") -> str:
+    """Generate contextual, intelligent response based on question analysis and complexity"""
     
     question_type = analysis["question_type"]
     crypto_mentions = analysis["crypto_mentions"]
     sentiment = analysis["sentiment"]
     urgency = analysis["urgency"]
     
-    # Build dynamic response based on intelligent analysis
+    # Build dynamic response based on complexity level
     response_parts = []
     
-    # Add personalized greeting based on sentiment
-    if sentiment == "fearful":
-        greeting = "🤗 **I understand your concerns about crypto investing.**"
-    elif sentiment == "optimistic":  
-        greeting = "🚀 **Great to see your enthusiasm for crypto!**"
-    else:
-        greeting = "💡 **Let me help you with that crypto question.**"
+    # Simple responses - direct and brief
+    if complexity == "simple":
+        if question_type == "price_analysis" and crypto_mentions:
+            return await generate_simple_price_response(crypto_mentions[0], real_time_data)
+        elif question_type == "general" or not crypto_mentions:
+            return "Professional crypto analysis available. Please specify which cryptocurrency or topic you'd like information about."
+        else:
+            return generate_simple_response(question, analysis, crypto_mentions)
     
-    response_parts.append(f"{greeting} • {timestamp}\n")
+    # Medium responses - structured but concise
+    elif complexity == "medium":
+        # Professional greeting without emojis for medium complexity
+        response_parts.append(f"**Professional Analysis** • {timestamp}\n\n")
+        
+        # Generate focused content
+        if question_type == "investment_advice":
+            main_content = generate_medium_investment_advice(question, crypto_mentions, sentiment)
+        elif question_type == "price_analysis":
+            main_content = await generate_medium_price_analysis(question, crypto_mentions, real_time_data)
+        elif question_type == "educational":
+            main_content = generate_medium_educational_content(question, crypto_mentions)
+        else:
+            main_content = generate_medium_general_response(question, analysis)
+        
+        response_parts.append(main_content)
+        
+        # Brief closing
+        response_parts.append("\n\n**Note:** This is educational information, not financial advice.")
     
-    # Generate main content based on question type and context
-    if question_type == "investment_advice":
-        main_content = generate_investment_advice(question, crypto_mentions, sentiment)
-    elif question_type == "price_analysis":
-        main_content = generate_price_analysis(question, crypto_mentions, real_time_data)
-    elif question_type == "educational":
-        main_content = generate_educational_content(question, crypto_mentions)
-    elif question_type == "trading_advice":
-        main_content = generate_trading_advice(question, crypto_mentions)
-    elif question_type == "prediction":
-        main_content = generate_prediction_analysis(question, crypto_mentions)
-    else:
-        main_content = generate_general_crypto_response(question, analysis)
+    # Complex responses - detailed and comprehensive
+    else:  # complex
+        # Add professional greeting
+        if sentiment == "fearful":
+            greeting = "**Risk Assessment & Analysis**"
+        elif sentiment == "optimistic":  
+            greeting = "**Market Opportunity Analysis**"
+        else:
+            greeting = "**Comprehensive Crypto Analysis**"
+        
+        response_parts.append(f"{greeting} • {timestamp}\n\n")
+        
+        # Generate detailed content
+        if question_type == "investment_advice":
+            main_content = generate_investment_advice(question, crypto_mentions, sentiment)
+        elif question_type == "price_analysis":
+            main_content = generate_price_analysis(question, crypto_mentions, real_time_data)
+        elif question_type == "educational":
+            main_content = generate_educational_content(question, crypto_mentions)
+        elif question_type == "trading_advice":
+            main_content = generate_trading_advice(question, crypto_mentions)
+        elif question_type == "prediction":
+            main_content = generate_prediction_analysis(question, crypto_mentions)
+        else:
+            main_content = generate_general_crypto_response(question, analysis)
+        
+        response_parts.append(main_content)
+        
+        # Add contextual closing
+        if urgency == "high":
+            closing = "\n\n**Important Considerations:**\n• Start with small amounts to learn\n• Use reputable exchanges only\n• Never invest emergency funds\n• Take time to research properly"
+        else:
+            closing = "\n\n**Professional Disclaimer:** This analysis is for educational purposes only and should not be considered as financial advice. Always conduct your own research and consider your risk tolerance."
+        
+        response_parts.append(closing)
     
-    response_parts.append(main_content)
-    
-    # Add contextual closing based on urgency and sentiment
-    if urgency == "high":
-        closing = "\n**⚡ Quick Action Items:**\n- Start with small amounts to learn\n- Use reputable exchanges only\n- Never invest emergency funds\n- Take time to research properly"
-    else:
-        closing = f"\n**💡 Next Steps:**\n- Continue learning about crypto fundamentals\n- Consider your risk tolerance carefully\n- Start small and gradually increase knowledge\n- Feel free to ask more specific questions!"
-    
-    response_parts.append(closing)
-    
-    # Clean up response before returning
+    # Join and return
     final_response = "".join(response_parts)
-    return clean_ai_response(final_response)
+    return final_response
 
-def clean_ai_response(response: str) -> str:
-    """Clean up AI response to remove unwanted formatting and content"""
+async def generate_simple_price_response(crypto_symbol: str, real_time_data: Dict[str, Any] = {}, question_type: str = "price") -> str:
+    """Generate response with live API data - handles both price queries and explanations"""
     
-    # Remove markdown asterisks for bullets (convert to simple bullets)
-    response = response.replace("* ", "• ")
-    response = response.replace("*", "")
+    # Convert crypto name to symbol if needed
+    name_to_symbol = {
+        'BITCOIN': 'BTC',
+        'ETHEREUM': 'ETH', 
+        'SOLANA': 'SOL',
+        'CARDANO': 'ADA',
+        'POLYGON': 'MATIC',
+        'POLKADOT': 'DOT',
+        'CHAINLINK': 'LINK',
+        'COSMOS': 'ATOM',
+        'ALGORAND': 'ALGO',
+        'UNISWAP': 'UNI'
+    }
     
-    # Remove any fake portfolio information
-    lines = response.split('\n')
-    cleaned_lines = []
-    skip_next_lines = 0
+    crypto_key = crypto_symbol.upper()
+    # Convert name to symbol if it's a full name
+    if crypto_key in name_to_symbol:
+        crypto_key = name_to_symbol[crypto_key]
     
-    for i, line in enumerate(lines):
-        # Skip portfolio-related content
-        if any(phrase in line.lower() for phrase in [
-            "your current portfolio",
-            "current portfolio", 
-            "portfolio:",
-            "'btc'", "'eth'", "'xrp'", "'usdt'", "'sol'",
-            "['btc',", "[btc,", "btc, eth, xrp"
-        ]):
-            skip_next_lines = 3  # Skip this line and next 2 lines
-            continue
-            
-        if skip_next_lines > 0:
-            skip_next_lines -= 1
-            continue
-            
-        # Clean up other unwanted content
-        if not any(unwanted in line.lower() for unwanted in [
-            "recommendation:",
-            "continue to monitor market trends",
-            "consider adding a stablecoin"
-        ]):
-            cleaned_lines.append(line)
+    print(f"🔍 [DEBUG] generate_simple_price_response called for: {crypto_symbol} -> {crypto_key}")
     
-    # Join back and clean up extra spaces/newlines
-    cleaned_response = '\n'.join(cleaned_lines)
+    # Try to get live price first
+    live_data = await get_live_crypto_price(crypto_key)
+    print(f"🔍 [DEBUG] live_data result: {live_data}")
     
-    # Remove multiple consecutive newlines
-    import re
-    cleaned_response = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_response)
+    if live_data:
+        price = live_data['price']
+        change = live_data['change_24h']
+        name = live_data['name']
+        
+        # For explanation questions, provide brief overview with LIVE price
+        if "explain" in question_type.lower() or "what is" in question_type.lower():
+            return f"{name} (BTC) is the world's largest cryptocurrency by market capitalization. Current price: ${price:,.2f} ({change:+.1f}% 24h). It serves as digital gold and a store of value in the crypto ecosystem."
+        
+        # For simple price questions, just return price without trend commentary
+        else:
+            return f"{name} ({crypto_key}): ${price:,.2f} ({change:+.1f}% 24h)"
     
-    return cleaned_response.strip()
+    else:
+        # Fallback when API fails - but still try to be helpful
+        return f"{crypto_key} price data temporarily unavailable due to API issues. Please try again in a moment or check a major exchange for current pricing."
+
+def generate_simple_response(question: str, analysis: Dict[str, Any], crypto_mentions: list) -> str:
+    """Generate simple response for non-price questions - plain text only"""
+    
+    question_type = analysis["question_type"]
+    
+    if question_type == "investment_advice":
+        return "Investment guidance: Crypto investing involves high risk. Start with small amounts, use reputable exchanges, and never invest more than you can afford to lose."
+    
+    elif question_type == "educational":
+        if crypto_mentions:
+            crypto = crypto_mentions[0]
+            return f"{crypto} is a cryptocurrency. For detailed technical information, please ask a more specific question about its technology or use case."
+        return "Cryptocurrency education: Digital assets using blockchain technology. Ask about specific topics for detailed explanations."
+    
+    elif question_type == "trading_advice":
+        return "Trading guidance: Use proper risk management, set stop-losses, and never trade with borrowed money. Market timing is extremely difficult."
+    
+    else:
+        return "Professional Analysis Available. Please specify your question about cryptocurrency markets, investments, or technology."
+
+def generate_medium_investment_advice(question: str, crypto_mentions: list, sentiment: str) -> str:
+    """Generate medium-length investment advice"""
+    
+    advice_parts = []
+    
+    if "safe" in question.lower() or "risk" in question.lower():
+        advice_parts.append("**Investment Risk Assessment:**\n\n")
+        advice_parts.append("Cryptocurrency investing carries significant risks including extreme volatility, regulatory uncertainty, and technology risks. However, it can be part of a diversified portfolio.\n\n")
+        advice_parts.append("**Recommended Approach:**\n")
+        advice_parts.append("• Limit crypto to 5-10% of total investment portfolio\n")
+        advice_parts.append("• Start with Bitcoin and Ethereum (lower risk cryptos)\n")
+        advice_parts.append("• Use dollar-cost averaging over 6-12 months\n")
+        advice_parts.append("• Only invest funds you can completely afford to lose")
+    
+    elif crypto_mentions:
+        crypto = crypto_mentions[0]
+        advice_parts.append(f"**{crypto} Investment Analysis:**\n\n")
+        
+        if crypto in ['BTC', 'BITCOIN']:
+            advice_parts.append("Bitcoin is considered the lowest-risk cryptocurrency investment due to its established network, institutional adoption, and fixed supply. Good entry point for crypto beginners.\n\n")
+            advice_parts.append("**Key factors:** Store of value narrative, ETF approvals, institutional adoption, and 4-year market cycles.")
+        
+        elif crypto in ['ETH', 'ETHEREUM']:
+            advice_parts.append("Ethereum offers growth potential through its smart contract platform and DeFi ecosystem. Generates staking yield but more volatile than Bitcoin.\n\n")
+            advice_parts.append("**Key factors:** DeFi leadership, NFT platform, staking rewards, and upcoming network upgrades.")
+        
+        else:
+            advice_parts.append(f"{crypto} is a higher-risk investment compared to Bitcoin/Ethereum. Requires thorough research of the project's fundamentals.\n\n")
+            advice_parts.append("**Due diligence:** Research team, technology, partnerships, tokenomics, and competitive advantages.")
+    
+    else:
+        advice_parts.append("**General Investment Strategy:**\n\n")
+        advice_parts.append("Focus on established cryptocurrencies for core holdings (70% Bitcoin/Ethereum), with smaller allocations to promising altcoins (30%).\n\n")
+        advice_parts.append("**Strategy:** Long-term holding (3-5+ years), regular DCA purchases, and gradual profit-taking during market peaks.")
+    
+    return "".join(advice_parts)
+
+async def generate_medium_price_analysis(question: str, crypto_mentions: list, real_time_data: Dict[str, Any] = {}) -> str:
+    """Generate medium-length price analysis with live data - plain text"""
+    
+    if not crypto_mentions:
+        return "Market Overview: Crypto markets showing mixed signals. Specify a particular cryptocurrency for detailed price analysis."
+    
+    crypto = crypto_mentions[0]
+    
+    # Try to get live price data
+    live_data = await get_live_crypto_price(crypto)
+    
+    if not live_data:
+        return f"{crypto} Analysis: Price data temporarily unavailable due to API issues. Please check major crypto exchanges for current pricing."
+    
+    price = live_data['price']
+    change = live_data['change_24h']
+    name = live_data['name']
+    
+    # Determine trend based on price change
+    if change > 5:
+        trend = "Strong bullish momentum"
+        outlook = "Strong bullish momentum. Monitor for profit-taking at resistance levels."
+    elif change > 2:
+        trend = "Moderate upward movement"
+        outlook = "Positive momentum building. Good for continued accumulation."
+    elif change > -2:
+        trend = "Sideways consolidation"
+        outlook = "Consolidation phase. Good for range trading or continued DCA strategy."
+    elif change > -5:
+        trend = "Minor correction"
+        outlook = "Minor pullback. Potential buying opportunity for long-term holders."
+    else:
+        trend = "Significant correction"
+        outlook = "Major correction phase. High-risk, high-reward accumulation opportunity for experienced investors."
+    
+    # Plain text response without markdown
+    analysis_parts = []
+    analysis_parts.append(f"{name} ({crypto}) Analysis:\n\n")
+    analysis_parts.append(f"Current Price: ${price:,.2f}\n")
+    analysis_parts.append(f"24h Change: {change:+.1f}%\n")
+    analysis_parts.append(f"Market Trend: {trend}\n\n")
+    analysis_parts.append(f"Technical Outlook: {outlook}")
+    
+    return "".join(analysis_parts)
+
+def generate_medium_educational_content(question: str, crypto_mentions: list) -> str:
+    """Generate medium-length educational content"""
+    
+    if not crypto_mentions:
+        return "**Cryptocurrency Education:** Digital assets using blockchain technology for decentralized transactions. Popular examples include Bitcoin (store of value), Ethereum (smart contracts), and various altcoins serving specific use cases."
+    
+    crypto = crypto_mentions[0]
+    
+    education_content = {
+        'BTC': "**Bitcoin Education:** First cryptocurrency (2009) designed as digital gold. Uses proof-of-work consensus, has fixed supply of 21 million coins, and serves as a decentralized store of value without central authority.",
+        
+        'ETH': "**Ethereum Education:** Blockchain platform (2015) enabling smart contracts and decentralized applications (DApps). Powers DeFi, NFTs, and various crypto innovations. Uses proof-of-stake consensus since 2022.",
+        
+        'SOL': "**Solana Education:** High-speed blockchain focused on scalability and low fees. Popular for DeFi and NFT applications. Uses unique proof-of-history consensus mechanism for faster transaction processing."
+    }
+    
+    return education_content.get(crypto, f"**{crypto} Education:** This cryptocurrency has specific use cases and technology. Please ask about particular aspects like consensus mechanism, use cases, or tokenomics for detailed information.")
+
+def generate_medium_general_response(question: str, analysis: Dict[str, Any]) -> str:
+    """Generate medium-length general response"""
+    
+    question_type = analysis["question_type"]
+    
+    if question_type == "trading_advice":
+        return "**Trading Guidance:** Successful crypto trading requires risk management, technical analysis skills, and emotional discipline. Use stop-losses, position sizing, and never risk more than 2-3% per trade. Market timing is extremely difficult - consider long-term investing instead."
+    
+    elif question_type == "prediction":
+        return "**Market Predictions:** Crypto markets are highly unpredictable due to volatility, regulatory factors, and sentiment swings. While technical analysis can provide insights, no one can accurately predict short-term price movements. Focus on long-term fundamentals instead."
+    
+    else:
+        return "**Professional Crypto Analysis:** I can provide insights on cryptocurrency investments, technology, market analysis, and educational content. Please specify your area of interest for detailed information tailored to your needs."
+
+
 
 def generate_investment_advice(question: str, crypto_mentions: list, sentiment: str) -> str:
     """Generate dynamic investment advice based on question context"""
