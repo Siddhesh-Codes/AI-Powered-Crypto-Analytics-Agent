@@ -32,6 +32,24 @@ export interface ChatMessage {
 }
 
 /**
+ * Chat Alert Interface
+ */
+export interface ChatAlert {
+  type: 'bullish' | 'bearish' | 'neutral' | 'warning';
+  message: string;
+}
+
+/**
+ * Chat Tool Interface
+ */
+export interface ChatTool {
+  name: string;
+  icon: string;
+  action: string;
+  data?: any;
+}
+
+/**
  * Enhanced AI Chatbot Component with Real AI Backend
  */
 interface AIChatbotProps {
@@ -215,7 +233,12 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
     await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
 
     const message = userMessage.toLowerCase();
-    const timestamp = new Date().toLocaleTimeString();
+    const timestamp = new Date().toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
     
     const dynamicIntros = [
       "🤖 **Enhanced AI Analysis**",
@@ -319,8 +342,8 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
     };
   };
 
-  const generateToolsFromResponse = (response: string): any[] => {
-    const tools = [];
+  const generateToolsFromResponse = (response: string): ChatTool[] => {
+    const tools: ChatTool[] = [];
     
     if (response.includes('calculator') || response.includes('profit')) {
       tools.push({ name: 'Calculator', icon: 'calculator', action: 'calc' });
@@ -335,8 +358,8 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
     return tools;
   };
 
-  const generateAlertsFromResponse = (response: string): any[] => {
-    const alerts = [];
+  const generateAlertsFromResponse = (response: string): ChatAlert[] => {
+    const alerts: ChatAlert[] = [];
     
     if (response.includes('profits') && response.includes('strong')) {
       alerts.push({ type: 'bullish', message: 'Strong performance detected - consider profit taking' });
@@ -384,7 +407,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
     handleSendMessage(suggestion);
   };
 
-  const handleToolAction = (tool: any) => {
+  const handleToolAction = (tool: ChatTool) => {
     switch (tool.action) {
       case 'calc':
         handleSendMessage('Show me profit calculator');
@@ -473,30 +496,38 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
   }
 
   return (
-    <div className={`fixed bottom-6 right-6 z-50 ${className}`}>
-      <div className={`${themeClasses.container} rounded-xl shadow-2xl transition-all duration-300 ${
-        isMinimized ? 'w-80 h-16' : 'w-96 h-[700px]'
-      } backdrop-blur-lg`}>
+    <div className={`fixed bottom-4 right-4 z-50 ${className} 
+      sm:bottom-6 sm:right-6
+      md:bottom-6 md:right-6
+    `}>
+      <div className={`${themeClasses.container} rounded-xl shadow-2xl transition-all duration-300 backdrop-blur-lg ${
+        isMinimized 
+          ? 'w-72 h-16 sm:w-80 sm:h-16' 
+          : 'w-[calc(100vw-2rem)] h-[calc(100vh-8rem)] sm:w-96 sm:h-[600px] md:w-96 md:h-[700px] max-w-md'
+      }`}>
         
         {/* Enhanced Header */}
-        <div className={`flex items-center justify-between p-4 border-b border-slate-700 ${themeClasses.header} rounded-t-xl relative overflow-hidden`}>
+        <div className={`flex items-center justify-between p-3 sm:p-4 border-b border-slate-700 ${themeClasses.header} rounded-t-xl relative overflow-hidden`}>
           <div className="absolute inset-0 bg-gradient-to-r from-purple-600/20 via-blue-600/20 to-green-600/20 animate-pulse"></div>
-          <div className="flex items-center space-x-3 relative z-10">
-            <div className="w-8 h-8 bg-white/90 rounded-full flex items-center justify-center animate-bounce">
-              <Brain className="w-5 h-5 text-purple-600" />
+          <div className="flex items-center space-x-2 sm:space-x-3 relative z-10 min-w-0 flex-1">
+            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-white/90 rounded-full flex items-center justify-center animate-bounce flex-shrink-0">
+              <Brain className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
             </div>
-            <div>
-              <h3 className="font-bold text-white">Real AI Crypto Assistant 🚀</h3>
+            <div className="min-w-0 flex-1">
+              <h3 className="font-bold text-white text-sm sm:text-base truncate">
+                <span className="hidden sm:inline">Real AI Crypto Assistant</span>
+                <span className="sm:hidden">AI Assistant</span>
+              </h3>
               <p className="text-xs text-blue-100">
-                {aiStatus === 'online' ? '🟢 AI Backend Online' : 
-                 aiStatus === 'fallback' ? '🟡 Enhanced Fallback' : '🔴 Reconnecting...'}
+                {aiStatus === 'online' ? '🟢 AI Online' : 
+                 aiStatus === 'fallback' ? '🟡 Enhanced' : '🔴 Reconnecting...'}
               </p>
             </div>
           </div>
-          <div className="flex items-center space-x-2 relative z-10">
+          <div className="flex items-center space-x-1 sm:space-x-2 relative z-10 flex-shrink-0">
             <button
               onClick={() => setChatTheme(chatTheme === 'dark' ? 'crypto' : chatTheme === 'crypto' ? 'light' : 'dark')}
-              className="p-1 hover:bg-white/20 rounded text-white transition-colors"
+              className="p-1 hover:bg-white/20 rounded text-white transition-colors hidden sm:block"
               title="Change Theme"
             >
               <Settings className="w-4 h-4" />
@@ -505,13 +536,13 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
               onClick={() => setIsMinimized(!isMinimized)}
               className="p-1 hover:bg-white/20 rounded text-white transition-colors"
             >
-              {isMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+              {isMinimized ? <Maximize2 className="w-3 h-3 sm:w-4 sm:h-4" /> : <Minimize2 className="w-3 h-3 sm:w-4 sm:h-4" />}
             </button>
             <button
               onClick={onToggle}
               className="p-1 hover:bg-white/20 rounded text-white transition-colors"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3 h-3 sm:w-4 sm:h-4" />
             </button>
           </div>
         </div>
@@ -519,7 +550,8 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
         {!isMinimized && (
           <>
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 h-[calc(700px-180px)] custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar 
+              h-[calc(100vh-16rem)] sm:h-[calc(600px-180px)] md:h-[calc(700px-180px)]">
               {messages.map((message) => (
                 <div
                   key={message.id}
@@ -528,24 +560,24 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                   <div className={`flex items-start space-x-3 max-w-[90%] ${
                     message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''
                   }`}>
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                       message.type === 'user' 
                         ? 'bg-gradient-to-r from-blue-500 to-purple-500' 
                         : 'bg-gradient-to-r from-purple-500 via-blue-500 to-green-500 animate-pulse'
                     }`}>
                       {message.type === 'user' ? (
-                        <User className="w-4 h-4 text-white" />
+                        <User className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
                       ) : (
-                        <Brain className="w-4 h-4 text-white" />
+                        <Brain className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
                       )}
                     </div>
                     <div className="flex-1">
-                      <div className={`rounded-lg p-3 relative group ${
+                      <div className={`rounded-lg p-2 sm:p-3 relative group ${
                         message.type === 'user'
                           ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
                           : `${themeClasses.message} shadow-lg`
                       }`}>
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                        <div className="whitespace-pre-wrap text-xs sm:text-sm leading-relaxed">
                           {message.content}
                         </div>
                         
@@ -571,7 +603,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                       {/* Alerts */}
                       {message.alerts && message.alerts.length > 0 && (
                         <div className="mt-3 space-y-2">
-                          {message.alerts.map((alert, index) => (
+                          {message.alerts.map((alert: ChatAlert, index: number) => (
                             <div key={index} className={`flex items-center space-x-2 p-2 rounded-lg ${
                               alert.type === 'bullish' ? 'bg-green-600/20 text-green-300' :
                               alert.type === 'bearish' ? 'bg-red-600/20 text-red-300' :
@@ -590,7 +622,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                         <div className="mt-3">
                           <p className="text-xs text-slate-400 mb-2">Quick tools:</p>
                           <div className="flex flex-wrap gap-2">
-                            {message.tools.map((tool, index) => (
+                            {message.tools.map((tool: ChatTool, index: number) => (
                               <button
                                 key={index}
                                 onClick={() => handleToolAction(tool)}
@@ -611,7 +643,7 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                         <div className="mt-3 space-y-2">
                           <p className="text-xs text-slate-400">Suggested actions:</p>
                           <div className="grid grid-cols-2 gap-2">
-                            {message.suggestions.map((suggestion, index) => (
+                            {message.suggestions.map((suggestion: string, index: number) => (
                               <button
                                 key={index}
                                 onClick={() => handleSuggestionClick(suggestion)}
@@ -651,8 +683,8 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
             </div>
 
             {/* Input */}
-            <div className="p-4 border-t border-slate-700/50 bg-slate-800/30 backdrop-blur-sm">
-              <div className="flex items-center space-x-3">
+            <div className="p-3 sm:p-4 border-t border-slate-700/50 bg-slate-800/30 backdrop-blur-sm">
+              <div className="flex items-center space-x-2 sm:space-x-3">
                 <div className="relative flex-1">
                   <input
                     ref={inputRef}
@@ -660,36 +692,41 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder={isListening ? "🎤 Listening..." : "Ask me anything about crypto..."}
-                    className={`w-full ${themeClasses.input} rounded-lg px-4 py-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all duration-200 pr-12`}
+                    placeholder={isListening ? "🎤 Listening..." : "Ask about crypto..."}
+                    className={`w-full ${themeClasses.input} rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all duration-200 pr-10 sm:pr-12`}
                     disabled={isTyping || isListening}
                   />
                   <button
                     onClick={toggleVoiceInput}
-                    className={`absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full transition-colors ${
+                    className={`absolute right-2 sm:right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full transition-colors ${
                       isListening ? 'text-red-400 animate-pulse' : 'text-slate-400 hover:text-white'
                     }`}
                     title="Voice Input"
                   >
-                    {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    {isListening ? <MicOff className="w-3 h-3 sm:w-4 sm:h-4" /> : <Mic className="w-3 h-3 sm:w-4 sm:h-4" />}
                   </button>
                 </div>
                 <button
                   onClick={() => handleSendMessage()}
                   disabled={!inputMessage.trim() || isTyping || isListening}
-                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white p-3 rounded-lg transition-all duration-200 hover:scale-105 disabled:hover:scale-100"
+                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2 sm:p-3 rounded-lg transition-all duration-200 hover:scale-105 disabled:hover:scale-100"
                   title="Send Message"
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-3 h-3 sm:w-4 sm:h-4" />
                 </button>
               </div>
               
               {/* Status Bar */}
-              <div className="flex items-center justify-between mt-3">
-                <div className="flex items-center space-x-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mt-2 sm:mt-3 space-y-2 sm:space-y-0">
+                <div className="flex items-center space-x-2 sm:space-x-4">
                   <p className="text-xs text-slate-500 flex items-center">
                     <Brain className="w-3 h-3 mr-1" />
-                    {aiStatus === 'online' ? 'Real AI • Live data' : 'Enhanced fallback • Real data'}
+                    <span className="hidden sm:inline">
+                      {aiStatus === 'online' ? 'Real AI • Live data' : 'Enhanced fallback • Real data'}
+                    </span>
+                    <span className="sm:hidden">
+                      {aiStatus === 'online' ? 'AI Online' : 'Fallback'}
+                    </span>
                   </p>
                   <div className="flex items-center space-x-1">
                     <div className={`w-2 h-2 rounded-full animate-pulse ${
@@ -698,16 +735,17 @@ export const AIChatbot: React.FC<AIChatbotProps> = ({
                     <span className={`text-xs ${
                       aiStatus === 'online' ? 'text-green-400' : 'text-yellow-400'
                     }`}>
-                      {aiStatus === 'online' ? 'AI Online' : 'Fallback'}
+                      {aiStatus === 'online' ? 'Live' : 'Active'}
                     </span>
                   </div>
                 </div>
               </div>
               
               <div className="flex items-center justify-center mt-2">
-                <p className="text-xs text-slate-500 flex items-center">
+                <p className="text-xs text-slate-500 flex items-center text-center">
                   <HelpCircle className="w-3 h-3 mr-1" />
-                  Powered by real AI • Not financial advice
+                  <span className="hidden sm:inline">Powered by real AI • Not financial advice</span>
+                  <span className="sm:hidden">Not financial advice</span>
                 </p>
               </div>
             </div>

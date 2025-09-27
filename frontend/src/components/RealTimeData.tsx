@@ -146,7 +146,12 @@ const RealTimeData = () => {
   };
 
   const formatTime = (timestamp: string) => {
-    return new Date(timestamp).toLocaleTimeString();
+    return new Date(timestamp).toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
   };
 
   const getSentimentColor = (sentiment: string) => {

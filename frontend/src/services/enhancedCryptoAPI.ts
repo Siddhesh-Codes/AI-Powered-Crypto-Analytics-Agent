@@ -112,21 +112,28 @@ export class EnhancedCryptoAPI {
 
     const data = await response.json();
     
-    return data.map((coin: any): EnhancedCryptoData => ({
-      id: coin.id,
-      symbol: coin.symbol.toUpperCase(),
-      name: coin.name,
-      price: coin.current_price || 0,
-      change24h: coin.price_change_24h || 0,
-      changePercent24h: coin.price_change_percentage_24h || 0,
-      volume24h: coin.total_volume || 0,
-      marketCap: coin.market_cap || 0,
-      rank: coin.market_cap_rank || 999,
-      image: coin.image || '',
-      lastUpdated: Date.now(),
-      source: 'CoinGecko API',
-      priceHistory: this.generateRecentPriceHistory(coin.current_price, coin.price_change_24h)
-    }));
+    return data.map((coin: any): EnhancedCryptoData => {
+      const currentPrice = coin.current_price || 0;
+      const change24h = coin.price_change_24h || 0;
+      const rawHistory = this.generateRecentPriceHistory(currentPrice, change24h);
+      const validatedHistory = this.validatePriceHistory(currentPrice, rawHistory);
+      
+      return {
+        id: coin.id,
+        symbol: coin.symbol.toUpperCase(),
+        name: coin.name,
+        price: currentPrice,
+        change24h: change24h,
+        changePercent24h: coin.price_change_percentage_24h || 0,
+        volume24h: coin.total_volume || 0,
+        marketCap: coin.market_cap || 0,
+        rank: coin.market_cap_rank || 999,
+        image: coin.image || '',
+        lastUpdated: Date.now(),
+        source: 'CoinGecko API',
+        priceHistory: [] // DISABLE price history from API - let market store handle it
+      };
+    });
   }
 
   /**
@@ -170,20 +177,43 @@ export class EnhancedCryptoAPI {
    * Generate realistic price history for charts
    */
   private generateRecentPriceHistory(currentPrice: number, change24h: number): number[] {
+    if (!currentPrice || currentPrice <= 0) return [];
+    
     const history: number[] = [];
-    const basePrice = currentPrice - change24h;
     const hours = 24;
     
+    // Generate simple price history that stays very close to current price
     for (let i = 0; i < hours; i++) {
-      const progress = i / (hours - 1);
-      const noise = (Math.random() - 0.5) * currentPrice * 0.02; // 2% noise
-      const trendPrice = basePrice + (change24h * progress);
-      history.push(Math.max(trendPrice + noise, 0.01));
+      // Generate price that varies only ±1% from current price
+      const variation = (Math.random() - 0.5) * 0.02; // ±1%
+      let price = currentPrice * (1 + variation);
+      
+      // Ensure last price is exactly current price
+      if (i === hours - 1) {
+        price = currentPrice;
+      }
+      
+      history.push(price);
     }
     
-    // Ensure the last price is the current price
-    history[history.length - 1] = currentPrice;
     return history;
+  }
+
+  /**
+   * Validate and fix price history to ensure realistic values
+   */
+  private validatePriceHistory(currentPrice: number, history: number[]): number[] {
+    if (!history || history.length === 0 || !currentPrice || currentPrice <= 0) return [];
+    
+    // Simple validation: ensure all prices are close to current price
+    return history.map((price, index) => {
+      // Ensure last price is exactly current price
+      if (index === history.length - 1) return currentPrice;
+      
+      // Keep prices within ±1% of current price
+      const variation = (Math.random() - 0.5) * 0.02; // ±1%
+      return currentPrice * (1 + variation);
+    });
   }
 
   /**

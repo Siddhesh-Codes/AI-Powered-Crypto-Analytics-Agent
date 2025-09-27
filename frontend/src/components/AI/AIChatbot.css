@@ -54,3 +54,34 @@
     background-position: 0% 50%;
   }
 }
+
+/* Mobile responsive adjustments */
+@media (max-width: 640px) {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 2px;
+  }
+  
+  /* Ensure chatbot doesn't overflow on small screens */
+  .chatbot-container {
+    max-height: calc(100vh - 2rem);
+    max-width: calc(100vw - 2rem);
+  }
+  
+  /* Adjust message spacing on mobile */
+  .chatbot-message {
+    margin-bottom: 0.75rem;
+  }
+  
+  /* Smaller touch targets on mobile */
+  .chatbot-button-mobile {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Tablet responsive adjustments */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .chatbot-container {
+    max-height: 80vh;
+  }
+}

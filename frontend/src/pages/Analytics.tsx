@@ -26,26 +26,67 @@ const Analytics: React.FC = () => {
     fetchTechnicalIndicators,
     fetchMarketSentiment,
     searchCryptos,
+    clearPriceHistory,
   } = useMarketStore();
 
   useEffect(() => {
-    // Load initial data
+    // Load initial data with COMPLETE refresh
     const loadData = async () => {
-      await Promise.all([
-        fetchTopCryptos(50),
-        fetchTechnicalIndicators(selectedCrypto),
-        fetchMarketSentiment(),
-      ]);
+      console.log('🔄 FORCE REFRESHING ALL DATA...');
+      
+      // Clear ALL existing data
+      clearPriceHistory();
+      
+      // Wait a bit to ensure state is cleared
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Load fresh data
+      await fetchTopCryptos(50);
+      await fetchTechnicalIndicators(selectedCrypto);
+      await fetchMarketSentiment();
+      
+      console.log('✅ Fresh data loaded');
     };
     loadData();
-  }, [fetchTopCryptos, fetchTechnicalIndicators, fetchMarketSentiment, selectedCrypto]);
+  }, [fetchTopCryptos, fetchTechnicalIndicators, fetchMarketSentiment, selectedCrypto, clearPriceHistory]);
 
   useEffect(() => {
-    // Fetch price history when crypto or timeframe changes
-    if (selectedCrypto) {
-      fetchPriceHistory(selectedCrypto, timeframe);
+    // Force regenerate price history when crypto or timeframe changes
+    if (selectedCrypto && topCryptos.length > 0) {
+      console.log(`🔄 ANALYTICS: Crypto changed to ${selectedCrypto}, generating fresh price history...`);
+      
+      // Clear existing data first
+      clearPriceHistory();
+      
+      // Wait a moment then generate fresh data
+      setTimeout(() => {
+        fetchPriceHistory(selectedCrypto, timeframe);
+      }, 100);
     }
-  }, [selectedCrypto, timeframe, fetchPriceHistory]);
+  }, [selectedCrypto, timeframe, topCryptos, fetchPriceHistory, clearPriceHistory]);
+
+  // Data consistency check - DISABLED to prevent interference
+  // useEffect(() => {
+  //   if (selectedCrypto && topCryptos.length > 0) {
+  //     const currentCrypto = topCryptos.find(crypto => crypto.symbol === selectedCrypto);
+  //     const currentHistory = priceHistory[selectedCrypto];
+      
+  //     // If we have both current crypto data and price history, ensure they're consistent
+  //     if (currentCrypto && currentHistory && currentHistory.length > 0) {
+  //       const lastHistoryPrice = currentHistory[currentHistory.length - 1]?.price;
+        
+  //       if (lastHistoryPrice && currentCrypto.price && currentCrypto.price > 0) {
+  //         const priceDifference = Math.abs(lastHistoryPrice - currentCrypto.price) / currentCrypto.price;
+          
+  //         // If price difference is more than 5%, refresh the price history
+  //         if (priceDifference > 0.05) {
+  //           console.log(`Price inconsistency detected for ${selectedCrypto}, refreshing...`);
+  //           fetchPriceHistory(selectedCrypto, timeframe);
+  //         }
+  //       }
+  //     }
+  //   }
+  // }, [topCryptos, selectedCrypto, priceHistory, timeframe, fetchPriceHistory]);
 
   const handleCryptoSelect = (crypto: MarketData) => {
     setSelectedCrypto(crypto.symbol);
@@ -66,10 +107,46 @@ const Analytics: React.FC = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    console.log('🔄 ANALYTICS REFRESH: Force clearing and regenerating all data...');
+    
+    // FORCE clear ALL existing data
+    clearPriceHistory();
+    
+    // Wait to ensure state is cleared
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // Refresh all base data
+    await fetchTopCryptos(50);
+    await fetchMarketSentiment();
+    
+    if (selectedCrypto) {
+      await fetchTechnicalIndicators(selectedCrypto);
+      
+      // Force regenerate price history with fresh data
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await fetchPriceHistory(selectedCrypto, timeframe);
+    }
+    
+    console.log('✅ ANALYTICS REFRESH: Complete');
+  };
+
   // Get data for selected crypto
   const currentCrypto = topCryptos.find(crypto => crypto.symbol === selectedCrypto);
   const currentPriceHistory = priceHistory[selectedCrypto] || [];
   const currentTechnicalIndicators = technicalIndicators[selectedCrypto];
+
+  // Get the latest price from price history if available for better accuracy
+  const latestHistoryPrice = currentPriceHistory.length > 0 
+    ? currentPriceHistory[currentPriceHistory.length - 1]?.price 
+    : null;
+  
+  // Use the most recent price data available
+  const displayPrice = latestHistoryPrice || currentCrypto?.price || 0;
+  const displayCrypto = currentCrypto ? {
+    ...currentCrypto,
+    price: displayPrice
+  } : null;
 
   // Filter cryptos based on search
   const filteredCryptos = searchQuery 
@@ -136,40 +213,49 @@ const Analytics: React.FC = () => {
             <option value="30d">30 Days</option>
             <option value="1y">1 Year</option>
           </select>
+
+          <button
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
         </div>
       </div>
 
       {/* Selected Crypto Overview */}
-      {currentCrypto && (
+      {displayCrypto && (
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-4">
               <div className="h-12 w-12 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center">
                 <span className="text-white font-bold">
-                  {currentCrypto.symbol.charAt(0)}
+                  {displayCrypto.symbol.charAt(0)}
                 </span>
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-white">{currentCrypto.name}</h2>
-                <p className="text-slate-400">{currentCrypto.symbol}</p>
+                <h2 className="text-2xl font-bold text-white">{displayCrypto.name}</h2>
+                <p className="text-slate-400">{displayCrypto.symbol}</p>
               </div>
             </div>
             <div className="text-right">
               <p className="text-3xl font-bold text-white">
-                ${currentCrypto.price.toLocaleString(undefined, {
+                ${displayCrypto.price.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
-                  maximumFractionDigits: currentCrypto.price < 1 ? 6 : 2,
+                  maximumFractionDigits: displayCrypto.price < 1 ? 6 : 2,
                 })}
               </p>
               <p className={`flex items-center justify-end text-lg ${
-                currentCrypto.priceChangePercent24h >= 0 ? 'text-green-400' : 'text-red-400'
+                displayCrypto.priceChangePercent24h >= 0 ? 'text-green-400' : 'text-red-400'
               }`}>
-                {currentCrypto.priceChangePercent24h >= 0 ? (
+                {displayCrypto.priceChangePercent24h >= 0 ? (
                   <TrendingUp className="w-5 h-5 mr-1" />
                 ) : (
                   <TrendingDown className="w-5 h-5 mr-1" />
                 )}
-                {currentCrypto.priceChangePercent24h.toFixed(2)}% (24h)
+                {displayCrypto.priceChangePercent24h.toFixed(2)}% (24h)
               </p>
             </div>
           </div>

@@ -39,20 +39,15 @@ const Dashboard: React.FC = () => {
   } = usePortfolioStore();
 
   useEffect(() => {
-    // Fetch initial data
+    // FORCE COMPLETE DATA REFRESH
     const loadData = async () => {
-      await Promise.all([
-        fetchTopCryptos(10),
-        fetchGlobalMetrics(),
-      ]);
+      console.log('🔄 DASHBOARD: FORCE REFRESHING ALL DATA...');
       
-      // Fetch price history for Bitcoin
-      if (topCryptos.length > 0) {
-        const btc = topCryptos.find(crypto => crypto.symbol === 'BTC');
-        if (btc) {
-          await fetchPriceHistory(btc.symbol, '24h');
-        }
-      }
+      // Load fresh crypto data (this will generate proper price history)
+      await fetchTopCryptos(10);
+      await fetchGlobalMetrics();
+      
+      console.log('✅ DASHBOARD: Fresh data loaded');
     };
 
     loadData();
@@ -65,7 +60,7 @@ const Dashboard: React.FC = () => {
     return () => {
       stopAutoRefresh();
     };
-  }, [fetchTopCryptos, fetchGlobalMetrics, fetchPriceHistory, calculateTotals, startAutoRefresh, stopAutoRefresh]);
+  }, [fetchTopCryptos, fetchGlobalMetrics, calculateTotals, startAutoRefresh, stopAutoRefresh]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -121,7 +116,7 @@ const Dashboard: React.FC = () => {
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 text-sm text-slate-400">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span>� Professional Market Analysis • Daily updates at market close</span>
+            <span>Market Analysis</span>
           </div>
           <button
             onClick={handleRefresh}

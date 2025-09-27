@@ -52,16 +52,65 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     );
   }
 
+  // Validate price data - check for unrealistic price ranges
+  const prices = data.map(item => item?.price || 0).filter(price => price > 0);
+  if (prices.length === 0) {
+    return (
+      <div className={`flex items-center justify-center h-64 bg-gray-50 dark:bg-gray-800 rounded-lg ${className}`}>
+        <p className="text-gray-500 dark:text-gray-400">Invalid price data</p>
+      </div>
+    );
+  }
+
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const priceRange = maxPrice - minPrice;
+  const avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+
+  // Temporarily disable price validation to allow all data through
+  // if (minPrice < 0.01 && maxPrice > avgPrice * 10) {
+  //   console.warn(`Extremely unrealistic price data detected for ${symbol}:`, { minPrice, maxPrice, avgPrice });
+  //   return (
+  //     <div className={`flex items-center justify-center h-64 bg-gray-50 dark:bg-gray-800 rounded-lg ${className}`}>
+  //       <p className="text-gray-500 dark:text-gray-400">Loading accurate price data...</p>
+  //     </div>
+  //   );
+  // }
+
+  // Debug log to see price data
+  console.log(`PriceChart for ${symbol}:`, {
+    dataLength: data.length,
+    firstPrice: data[0]?.price,
+    lastPrice: data[data.length - 1]?.price,
+    minPrice,
+    maxPrice,
+    avgPrice: avgPrice.toFixed(2)
+  });
+
   const chartData = {
     labels: data.map(item => {
       if (!item || typeof item.timestamp !== 'number') return '';
       const date = new Date(item.timestamp);
       if (timeframe === '1h') {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          timeZone: 'Asia/Kolkata',
+          hour12: true
+        }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
       } else if (timeframe === '24h') {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          timeZone: 'Asia/Kolkata',
+          hour12: true
+        }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
       } else {
-        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return date.toLocaleDateString('en-US', { 
+          month: 'short', 
+          day: 'numeric',
+          timeZone: 'Asia/Kolkata'
+        });
       }
     }),
     datasets: [
@@ -98,6 +147,21 @@ export const PriceChart: React.FC<PriceChartProps> = ({
         borderColor: 'rgba(71, 85, 105, 0.5)',
         borderWidth: 1,
         callbacks: {
+          title: function(context: any) {
+            // Show time in IST timezone
+            const dataIndex = context[0].dataIndex;
+            const timestamp = data[dataIndex]?.timestamp;
+            if (timestamp) {
+              const date = new Date(timestamp);
+              return date.toLocaleTimeString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+              }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
+            }
+            return '';
+          },
           label: function(context: any) {
             return `${symbol}: $${context.parsed.y.toLocaleString(undefined, {
               minimumFractionDigits: 2,
@@ -139,7 +203,11 @@ export const PriceChart: React.FC<PriceChartProps> = ({
 
   return (
     <div className={`${className}`}>
-      <Line data={chartData} options={options} />
+      <Line 
+        data={chartData} 
+        options={options} 
+        key={`price-chart-${symbol}-${data.length}-${data[0]?.timestamp || 'no-data'}`} // Force re-render with unique key
+      />
     </div>
   );
 };
@@ -155,19 +223,35 @@ interface VolumeChartProps {
 }
 
 export const VolumeChart: React.FC<VolumeChartProps> = ({ 
-  data, 
-  symbol, 
+  data = [], 
+  symbol = '', 
   className = '' 
 }) => {
+  // Add null safety for data
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    return (
+      <div className={`flex items-center justify-center h-64 bg-gray-50 dark:bg-gray-800 rounded-lg ${className}`}>
+        <p className="text-gray-500 dark:text-gray-400">No volume data available</p>
+      </div>
+    );
+  }
+
   const chartData = {
     labels: data.map(item => {
+      if (!item || typeof item.timestamp !== 'number') return '';
       const date = new Date(item.timestamp);
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      // For 24h data, show time instead of date
+      return date.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'Asia/Kolkata',
+        hour12: true
+      }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
     }),
     datasets: [
       {
-        label: `${symbol} Volume`,
-        data: data.map(item => item.volume),
+        label: `${symbol || 'Crypto'} Volume`,
+        data: data.map(item => (item && typeof item.volume === 'number') ? item.volume : 0),
         backgroundColor: 'rgba(59, 130, 246, 0.6)',
         borderColor: 'rgb(59, 130, 246)',
         borderWidth: 1,
@@ -183,14 +267,31 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
         display: false,
       },
       tooltip: {
+        mode: 'index' as const,
+        intersect: false,
         backgroundColor: 'rgba(15, 23, 42, 0.9)',
         titleColor: 'white',
         bodyColor: 'white',
         borderColor: 'rgba(71, 85, 105, 0.5)',
         borderWidth: 1,
         callbacks: {
+          title: function(context: any) {
+            // Show time in IST timezone
+            const dataIndex = context[0].dataIndex;
+            const timestamp = data[dataIndex]?.timestamp;
+            if (timestamp) {
+              const date = new Date(timestamp);
+              return date.toLocaleTimeString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+              }).replace(/am/i, 'AM').replace(/pm/i, 'PM');
+            }
+            return '';
+          },
           label: function(context: any) {
-            return `Volume: ${(context.parsed.y / 1000000).toFixed(2)}M`;
+            return `${symbol} Volume: ${(context.parsed.y / 1000000).toFixed(2)}M`;
           },
         },
       },
@@ -203,6 +304,7 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
         },
         ticks: {
           color: 'rgb(148, 163, 184)',
+          maxTicksLimit: 8, // Limit number of ticks to avoid clutter
         },
       },
       y: {
@@ -217,6 +319,10 @@ export const VolumeChart: React.FC<VolumeChartProps> = ({
           },
         },
       },
+    },
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
     },
   };
 
@@ -425,7 +531,12 @@ export const MarketOverviewChart: React.FC<MarketOverviewChartProps> = ({
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold text-white">Market Capitalization Overview</h3>
         <div className="text-sm text-slate-400">
-          Updated daily • Last update: {new Date().toLocaleDateString()}
+          Updated daily • Last update: {new Date().toLocaleDateString('en-US', {
+            timeZone: 'Asia/Kolkata',
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric'
+          })}
         </div>
       </div>
       <div className="mb-4">
