@@ -1,0 +1,23 @@
+{
+  "model_type": "random_forest",
+  "training_date": "2025-11-01T10:08:29.249905",
+  "test_score": -0.6085950865536653,
+  "num_features": 12,
+  "directional_accuracy": 54.40414507772021,
+  "mae": 2739.0329764703015,
+  "mape": 4.554740114066595,
+  "feature_names": [
+    "close",
+    "price_change",
+    "price_change_2d",
+    "price_change_7d",
+    "ma_7",
+    "ma_14",
+    "ma_30",
+    "volatility_7d",
+    "volatility_30d",
+    "rsi",
+    "volume_change",
+    "volume_ma_7"
+  ]
+}
