@@ -1,0 +1,73 @@
+/* TradingView Widget Styling */
+.tradingview-widget-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.tradingview-widget-container > div {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Ensure iframe fills container */
+.tradingview-widget-container iframe {
+  width: 100% !important;
+  height: 100% !important;
+  border: none;
+  border-radius: 8px;
+}
+
+/* TradingView copyright styling */
+.tradingview-widget-copyright {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.tradingview-widget-copyright a {
+  color: #64748b;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.tradingview-widget-copyright a:hover {
+  color: #94a3b8;
+}
+
+/* Responsive container adjustments */
+@media (max-width: 768px) {
+  .tradingview-widget-container {
+    min-height: 400px;
+  }
+}
+
+@media (min-width: 768px) {
+  .tradingview-widget-container {
+    min-height: 600px;
+  }
+}
+
+/* Loading state for TradingView widgets */
+.tradingview-widget-container:empty::before {
+  content: "Loading TradingView Chart...";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* Enhanced chart container styling */
+.chart-container {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.chart-container h2 {
+  color: #f1f5f9;
+  margin-bottom: 16px;
+}

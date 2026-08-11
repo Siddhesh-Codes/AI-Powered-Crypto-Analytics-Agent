@@ -1,0 +1,9 @@
+{
+  "train_scores": [
+    0.9628569430137225
+  ],
+  "test_scores": [
+    0.819075518225523
+  ],
+  "model_type": "random_forest"
+}

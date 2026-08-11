@@ -1,0 +1,16 @@
+# Set line ending handling for different file types
+* text=auto
+
+# Ensure these files always use LF
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+# Ensure .env files use the platform default
+.env text
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
